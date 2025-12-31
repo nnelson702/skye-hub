@@ -1,100 +1,104 @@
-// frontend/src/auth/AuthProvider.tsx
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 
 type AuthState = {
+  booting: boolean;
   session: Session | null;
   user: User | null;
-  loading: boolean;
   error: string | null;
+  retry: () => void;
   signOut: () => Promise<void>;
-  retry: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthState | undefined>(undefined);
+const AuthContext = createContext<AuthState | null>(null);
 
-function withTimeout<T>(p: Promise<T>, ms: number, label = "operation"): Promise<T> {
-  let t: number | undefined;
-  const timeout = new Promise<T>((_, reject) => {
-    t = window.setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = window.setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => {
+        window.clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        window.clearTimeout(t);
+        reject(e);
+      }
+    );
   });
-  return Promise.race([p, timeout]).finally(() => {
-    if (t) window.clearTimeout(t);
-  }) as Promise<T>;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [booting, setBooting] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const retryNonce = useRef(0);
+  const mounted = useRef(true);
+
   const boot = async () => {
-    setLoading(true);
+    setBooting(true);
     setError(null);
 
     try {
-      const { data, error: getErr } = await withTimeout(
+      // Primary session fetch (no /health calls)
+      const { data, error: sessErr } = await withTimeout(
         supabase.auth.getSession(),
-        10000,
+        8000,
         "auth.getSession"
       );
 
-      if (getErr) throw getErr;
+      if (sessErr) throw sessErr;
+
+      if (!mounted.current) return;
 
       setSession(data.session ?? null);
-      setUser(data.session?.user ?? null);
-    } catch (e: any) {
+      setBooting(false);
+    } catch (e: unknown) {
+      if (!mounted.current) return;
       setSession(null);
-      setUser(null);
-      setError(e?.message ?? "Auth initialization failed");
-    } finally {
-      setLoading(false);
+      setBooting(false);
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message || "Auth initialization failed.");
     }
   };
 
   useEffect(() => {
-    let mounted = true;
+    mounted.current = true;
+    void boot();
 
-    (async () => {
-      if (!mounted) return;
-      await boot();
-    })();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setUser(nextSession?.user ?? null);
-      // if auth state changes, we are no longer “booting”
-      setLoading(false);
-      setError(null);
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession ?? null);
     });
 
     return () => {
-      mounted = false;
+      mounted.current = false;
       sub.subscription.unsubscribe();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [retryNonce.current]);
 
-  const value = useMemo<AuthState>(
-    () => ({
+  const value = useMemo<AuthState>(() => {
+    return {
+      booting,
       session,
-      user,
-      loading,
+      user: session?.user ?? null,
       error,
+      retry: () => {
+        retryNonce.current += 1;
+        void boot();
+      },
       signOut: async () => {
         await supabase.auth.signOut();
       },
-      retry: async () => {
-        await boot();
-      },
-    }),
-    [session, user, loading, error]
-  );
+    };
+  }, [booting, session, error]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");

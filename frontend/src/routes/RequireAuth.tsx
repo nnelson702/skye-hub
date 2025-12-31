@@ -1,28 +1,30 @@
-// frontend/src/routes/RequireAuth.tsx
-import React from "react";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 
-export default function RequireAuth() {
-  const { session, loading, error } = useAuth();
-  const location = useLocation();
+export default function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { booting, user, error, retry, signOut } = useAuth();
+  const loc = useLocation();
 
-  if (loading) {
+  if (booting) {
     return <div style={{ padding: 24 }}>Loading…</div>;
-  }
-
-  if (!session) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
   if (error) {
     return (
       <div style={{ padding: 24 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Auth Error</div>
-        <div style={{ color: "#b91c1c" }}>{error}</div>
+        <h2 style={{ marginTop: 0 }}>Auth Error</h2>
+        <div style={{ color: "crimson", marginBottom: 12 }}>{error}</div>
+        <button onClick={retry} style={{ marginRight: 8 }}>
+          Retry
+        </button>
+        <button onClick={() => void signOut()}>Sign out</button>
       </div>
     );
   }
 
-  return <Outlet />;
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  }
+
+  return <>{children}</>;
 }

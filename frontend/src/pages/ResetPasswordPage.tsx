@@ -1,25 +1,27 @@
-// frontend/src/pages/ResetPasswordPage.tsx
-import React, { useState } from "react";
+import { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 export default function ResetPasswordPage() {
   const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const send = async () => {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+
     try {
-      setErr(null);
-      setMsg(null);
-      setBusy(true);
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin + "/login",
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin,
       });
       if (error) throw error;
-      setMsg("Password reset email sent.");
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to send reset email.");
+
+      setMsg("Password reset email sent (if the account exists).");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setErr(message || "Failed to send reset email.");
     } finally {
       setBusy(false);
     }
@@ -27,22 +29,26 @@ export default function ResetPasswordPage() {
 
   return (
     <div style={{ maxWidth: 520 }}>
-      <h1 style={{ margin: "8px 0 6px" }}>Reset Password</h1>
-      {err ? <div style={{ color: "crimson", marginBottom: 10 }}>{err}</div> : null}
-      {msg ? <div style={{ color: "green", marginBottom: 10 }}>{msg}</div> : null}
+      <h1 style={{ marginTop: 0 }}>Reset Password</h1>
+
+      {err ? <div style={{ color: "crimson", marginBottom: 12 }}>{err}</div> : null}
+      {msg ? <div style={{ color: "green", marginBottom: 12 }}>{msg}</div> : null}
 
       <label>
-        <div style={{ fontSize: 12, color: "#666" }}>Email</div>
-        <input value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: "100%", padding: 10, marginBottom: 12 }} />
+        <div>Email</div>
+        <input
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="email"
+          style={{ width: "100%", padding: 8 }}
+        />
       </label>
 
-      <button
-        onClick={send}
-        disabled={busy}
-        style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "10px 14px", cursor: "pointer", fontWeight: 800 }}
-      >
-        {busy ? "Sending…" : "Send reset email"}
-      </button>
+      <div style={{ marginTop: 12 }}>
+        <button disabled={busy} onClick={() => void send()} style={{ padding: "10px 12px" }}>
+          {busy ? "Sending…" : "Send reset email"}
+        </button>
+      </div>
     </div>
   );
 }
