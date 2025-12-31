@@ -8,7 +8,7 @@ type StoreRow = {
   ace_store_number: string;
   pos_store_number: string;
   store_name: string;
-  store_email: string | null;
+  email: string | null;
   address_line1: string | null;
   address_line2: string | null;
   city: string | null;
@@ -19,7 +19,6 @@ type StoreRow = {
   sort_order: number | null;
   timezone: string | null;
   status: "active" | "inactive";
-  primary_store_manager_id: string | null;
 };
 
 const empty = (): StoreRow => ({
@@ -27,7 +26,7 @@ const empty = (): StoreRow => ({
   ace_store_number: "",
   pos_store_number: "",
   store_name: "",
-  store_email: "",
+  email: "",
   address_line1: "",
   address_line2: "",
   city: "",
@@ -38,7 +37,6 @@ const empty = (): StoreRow => ({
   sort_order: 0,
   timezone: "America/Los_Angeles",
   status: "active",
-  primary_store_manager_id: null,
 });
 
 export default function AdminStoresPage() {
@@ -59,7 +57,7 @@ export default function AdminStoresPage() {
       const { data, error } = await supabase
         .from("stores")
         .select(
-          "id, ace_store_number, pos_store_number, store_name, store_email, address_line1, address_line2, city, state, postal_code, country, date_opened, sort_order, timezone, status, primary_store_manager_id"
+          "id, ace_store_number, pos_store_number, store_name, email, address_line1, address_line2, city, state, postal_code, country, date_opened, sort_order, timezone, status"
         )
         .order("sort_order", { ascending: true })
         .order("store_name", { ascending: true });
@@ -113,7 +111,7 @@ export default function AdminStoresPage() {
       ace_store_number: form.ace_store_number.trim(),
       pos_store_number: form.pos_store_number.trim(),
       store_name: form.store_name.trim(),
-      store_email: form.store_email?.trim() || null,
+      email: form.email?.trim() || null,
       address_line1: form.address_line1?.trim() || null,
       address_line2: form.address_line2?.trim() || null,
       city: form.city?.trim() || null,
@@ -224,8 +222,8 @@ export default function AdminStoresPage() {
           <label>
             <div>Store Email</div>
             <input
-              value={form.store_email ?? ""}
-              onChange={(e) => setForm((p) => ({ ...p, store_email: e.target.value }))}
+              value={form.email ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
               style={{ width: "100%", padding: 8 }}
             />
           </label>

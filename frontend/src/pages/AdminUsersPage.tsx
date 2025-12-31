@@ -109,6 +109,21 @@ export default function AdminUsersPage() {
     });
   }, [users, filterText, filterStatus]);
 
+  const [assignedStoreIds, setAssignedStoreIds] = useState<string[]>([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+
+  const loadAssignments = async (userId: string) => {
+    if (!userId) return setAssignedStoreIds([]);
+    try {
+      const { data, error } = await supabase.from("user_store_access").select("store_id").eq("user_id", userId);
+      if (error) throw error;
+      setAssignedStoreIds((data ?? []).map((r: { store_id: string }) => r.store_id));
+    } catch (e: unknown) {
+      console.error("loadAssignments error:", e);
+      setErr(formatError(e) || "Failed to load assigned stores.");
+    }
+  };
+
   const pickUser = (u: UserProfile) => {
     setForm({
       ...emptyForm,
@@ -120,9 +135,13 @@ export default function AdminUsersPage() {
       home_store_id: u.home_store_id ?? "",
       request_password_reset: true,
     });
+    void loadAssignments(u.id);
   };
 
-  const clear = () => setForm({ ...emptyForm });
+  const clear = () => {
+    setForm({ ...emptyForm });
+    setAssignedStoreIds([]);
+  };
 
   const saveProfileOnly = async () => {
     setErr(null);
@@ -168,52 +187,90 @@ export default function AdminUsersPage() {
       await load();
       // Keep selection in place
       setForm((prev) => ({ ...prev, full_name, email, role, status, home_store_id: home_store_id ?? "" }));
+      // reload assignments if this user's id present
+      if (form.id) await loadAssignments(form.id);
     } catch (e: unknown) {
       const message = formatError(e) || "Save failed.";
       setErr(message);
     }
   };
 
+  const addAssignment = async (storeId: string) => {
+    if (!auth.user) return setErr("Not signed in.");
+    if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
+    if (!form.id) return setErr("Select a user first.");
+
+    setAssignLoading(true);
+    setErr(null);
+    try {
+      const payload = {
+        user_id: form.id,
+        store_id: storeId,
+        assigned_by: auth.user.id,
+      };
+      const { error } = await supabase.from("user_store_access").insert(payload).select();
+      if (error) throw error;
+      await loadAssignments(form.id);
+    } catch (e: unknown) {
+      console.error("addAssignment error:", e);
+      setErr(formatError(e) || "Failed to add store assignment.");
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  const removeAssignment = async (storeId: string) => {
+    if (!auth.user) return setErr("Not signed in.");
+    if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
+    if (!form.id) return setErr("Select a user first.");
+
+    setAssignLoading(true);
+    setErr(null);
+    try {
+      const { error } = await supabase.from("user_store_access").delete().match({ user_id: form.id, store_id: storeId });
+      if (error) throw error;
+      await loadAssignments(form.id);
+    } catch (e: unknown) {
+      console.error("removeAssignment error:", e);
+      setErr(formatError(e) || "Failed to remove store assignment.");
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
+  // Show loading indicator while initial load is running
   if (loading) return <div>Loading…</div>;
 
+  // UI
   return (
     <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 18 }}>
-      <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h2 style={{ margin: 0 }}>Users</h2>
-          <button onClick={clear}>+ New</button>
-        </div>
-
-        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+      <div>
+        <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
           <input
-            placeholder="Search name/email…"
+            placeholder="Filter by name or email"
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
-            style={{ padding: 8 }}
+            style={{ flex: 1, padding: 8 }}
           />
-
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value as unknown as UserStatus | 'all')}
-            style={{ padding: 8 }}
-          >
-            <option value="active">active</option>
-            <option value="inactive">inactive</option>
-            <option value="all">all</option>
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as UserStatus | "all")} style={{ padding: 8 }}>
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
           </select>
         </div>
 
-        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+        <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 12 }}>
           {filteredUsers.map((u) => (
             <div
               key={u.id}
-              onClick={() => pickUser(u)}
               style={{
-                border: "1px solid #eee",
-                borderRadius: 10,
-                padding: 12,
+                padding: 8,
+                borderRadius: 8,
                 cursor: "pointer",
+                marginBottom: 6,
+                border: form.id === u.id ? "1px solid #000" : "1px solid transparent",
               }}
+              onClick={() => pickUser(u)}
             >
               <div style={{ fontWeight: 800 }}>{u.full_name}</div>
               <div style={{ color: "#555", fontSize: 13 }}>
@@ -318,6 +375,57 @@ export default function AdminUsersPage() {
         <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
           <button onClick={() => void saveProfileOnly()}>Save</button>
           <button onClick={clear}>Clear / New</button>
+        </div>
+
+        <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 12 }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Assigned Stores</div>
+          {form.id ? (
+            <>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select id="assign-store" style={{ padding: 8 }}>
+                  <option value="">— select store —</option>
+                  {stores
+                    .filter((s) => s.status === "active" && !assignedStoreIds.includes(s.id))
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.store_name} (ACE {s.ace_store_number})
+                      </option>
+                    ))}
+                </select>
+                <button
+                  onClick={() => {
+                    const sel = (document.getElementById("assign-store") as HTMLSelectElement).value;
+                    if (sel) void addAssignment(sel);
+                  }}
+                  disabled={assignLoading}
+                >
+                  Add
+                </button>
+              </div>
+
+              <div style={{ marginTop: 8 }}>
+                {assignedStoreIds.length === 0 ? (
+                  <div style={{ color: "#666" }}>No assigned stores.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {assignedStoreIds.map((sid) => {
+                      const s = stores.find((x) => x.id === sid);
+                      return (
+                        <div key={sid} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <div>{s ? `${s.store_name} (ACE ${s.ace_store_number})` : sid}</div>
+                          <button onClick={() => void removeAssignment(sid)} disabled={assignLoading}>
+                            Remove
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div style={{ color: "#666" }}>Select a user to manage store access.</div>
+          )}
         </div>
 
         <div style={{ marginTop: 18, borderTop: "1px solid #eee", paddingTop: 12, color: "#555" }}>
