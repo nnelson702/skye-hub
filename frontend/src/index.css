@@ -1,0 +1,41 @@
+/* C:\Users\NicholasNelson\github\skye-hub\frontend\src\index.css */
+/* Fixes the "huge top spacing" problem by removing Vite's default body centering styles */
+
+:root {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  line-height: 1.4;
+  font-weight: 400;
+
+  color: #111;
+  background: #fff;
+
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;              /* <-- critical */
+  padding: 0;
+  display: block;         /* <-- critical (kills flex centering) */
+  min-height: 100%;
+}
+
+#root {
+  min-height: 100%;
+}
+
+a {
+  color: inherit;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
