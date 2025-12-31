@@ -121,11 +121,14 @@ export default function AdminStoresPage() {
       date_opened: form.date_opened || null,
       sort_order: Number.isFinite(Number(form.sort_order)) ? Number(form.sort_order) : null,
       timezone: form.timezone?.trim() || null,
+      status: form.status,
     };
 
     if (!payload.ace_store_number) return setErr("ACE Store # is required.");
     if (!payload.pos_store_number) return setErr("POS Store # is required.");
     if (!payload.store_name) return setErr("Store Name is required.");
+
+    console.log(`AdminStoresPage: saving store id=${form.id || '<new>'} status=${payload.status}`);
 
     try {
       // If form.id is falsy -> create new store (omit id so DB can generate it)
@@ -136,6 +139,7 @@ export default function AdminStoresPage() {
         await load();
         // If desired, pick the newly created item into the form (keep simple: clear form)
         clear();
+        console.log("AdminStoresPage: save complete ok=true");
         return;
       }
 
@@ -145,10 +149,12 @@ export default function AdminStoresPage() {
 
       await load();
       clear();
+      console.log("AdminStoresPage: save complete ok=true");
     } catch (e: unknown) {
       const message = formatError(e) || "Save failed.";
       console.error("AdminStoresPage save error:", e);
       setErr(message);
+      console.log("AdminStoresPage: save complete ok=false");
     }
   };
 
@@ -176,7 +182,7 @@ export default function AdminStoresPage() {
                 cursor: "pointer",
               }}
             >
-              <div style={{ fontWeight: 800 }}>{s.store_name}</div>
+              <div style={{ fontWeight: 800 }}>{s.store_name}{s.status !== "active" ? " (inactive)" : ""}</div>
               <div style={{ color: "#555", fontSize: 13 }}>
                 ACE {s.ace_store_number} • POS {s.pos_store_number} • {s.status}
               </div>

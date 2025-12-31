@@ -173,6 +173,7 @@ export default function AdminUsersPage() {
         const token = auth.session?.access_token;
         if (!token) return setErr("Not signed in.");
 
+        console.log(`AdminUsersPage: invoking admin_upsert_user for email=${email}`);
         const resp = await fetch(`${supabaseUrl}/functions/v1/admin_upsert_user`, {
           method: "POST",
           headers: {
@@ -184,11 +185,26 @@ export default function AdminUsersPage() {
 
         const json = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          throw new Error(json?.error ?? "Failed to create user.");
+          // Provide actionable errors
+          if (resp.status === 404) {
+            setErr("admin_upsert_user function not found / not deployed (404). Deploy the function or check its name.");
+          } else if (resp.status === 401) {
+            setErr("Unauthorized: invalid or missing token when calling admin_upsert_user.");
+          } else if (resp.status === 403) {
+            setErr("Forbidden: caller is not authorized to create users (ensure you are an Admin and function allows calls).");
+          } else {
+            setErr(formatError(json) || `admin_upsert_user failed with status ${resp.status}`);
+          }
+          console.log(`AdminUsersPage: admin_upsert_user done ok=false status=${resp.status}`);
+          return;
         }
 
         const newUserId = json?.id;
-        if (!newUserId) throw new Error("No user id returned from admin_upsert_user.");
+        if (!newUserId) {
+          setErr("No user id returned from admin_upsert_user.");
+          console.log("AdminUsersPage: admin_upsert_user done ok=false missing id");
+          return;
+        }
 
         // Refresh and select the newly created user
         await load();
@@ -199,6 +215,7 @@ export default function AdminUsersPage() {
 
         // Show a short-lived notice with temp password
         if (json?.tempPassword) setNotice(`User created. Temp password: ${json.tempPassword}`);
+        console.log(`AdminUsersPage: admin_upsert_user done ok=true id=${newUserId}`);
         return;
       }
 
@@ -209,7 +226,10 @@ export default function AdminUsersPage() {
         role,
         status,
         home_store_id,
+        must_reset_password: form.request_password_reset ? true : false,
       };
+
+      console.log(`AdminUsersPage: saving profile id=${form.id || '<new>'} home_store_id=${payload.home_store_id} must_reset=${payload.must_reset_password}`);
 
       const { error } = await supabase.from("user_profiles").upsert(payload, { onConflict: "id" });
       if (error) throw error;
@@ -219,9 +239,12 @@ export default function AdminUsersPage() {
       setForm((prev) => ({ ...prev, full_name, email, role, status, home_store_id: home_store_id ?? "" }));
       // reload assignments if this user's id present
       if (form.id) await loadAssignments(form.id);
+      console.log("AdminUsersPage: save complete ok=true");
     } catch (e: unknown) {
       const message = formatError(e) || "Save failed.";
+      console.error("AdminUsersPage save error:", e);
       setErr(message);
+      console.log("AdminUsersPage: save complete ok=false");
     }
   };
 
@@ -230,6 +253,7 @@ export default function AdminUsersPage() {
     if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
     if (!form.id) return setErr("Select a user first.");
 
+    console.log(`AdminUsersPage: addAssignment user=${form.id} store=${storeId}`);
     setAssignLoading(true);
     setErr(null);
     try {
@@ -241,9 +265,11 @@ export default function AdminUsersPage() {
       const { error } = await supabase.from("user_store_access").insert(payload).select();
       if (error) throw error;
       await loadAssignments(form.id);
+      console.log(`AdminUsersPage: addAssignment done ok=true`);
     } catch (e: unknown) {
       console.error("addAssignment error:", e);
       setErr(formatError(e) || "Failed to add store assignment.");
+      console.log(`AdminUsersPage: addAssignment done ok=false`);
     } finally {
       setAssignLoading(false);
     }
@@ -254,15 +280,18 @@ export default function AdminUsersPage() {
     if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
     if (!form.id) return setErr("Select a user first.");
 
+    console.log(`AdminUsersPage: removeAssignment user=${form.id} store=${storeId}`);
     setAssignLoading(true);
     setErr(null);
     try {
       const { error } = await supabase.from("user_store_access").delete().match({ user_id: form.id, store_id: storeId });
       if (error) throw error;
       await loadAssignments(form.id);
+      console.log(`AdminUsersPage: removeAssignment done ok=true`);
     } catch (e: unknown) {
       console.error("removeAssignment error:", e);
       setErr(formatError(e) || "Failed to remove store assignment.");
+      console.log(`AdminUsersPage: removeAssignment done ok=false`);
     } finally {
       setAssignLoading(false);
     }
@@ -381,10 +410,9 @@ export default function AdminUsersPage() {
                 </option>
               ) : (
                 stores
-                  .filter((s) => String(s.status).toLowerCase() === "active")
                   .map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.store_name} (ACE {s.ace_store_number})
+                      {s.store_name} {s.status !== "active" ? "(inactive)" : ""} (ACE {s.ace_store_number})
                     </option>
                   ))
               )}
