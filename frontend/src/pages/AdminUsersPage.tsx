@@ -20,6 +20,7 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [filterText, setFilterText] = useState("");
   const [filterStatus, setFilterStatus] = useState<UserStatus | "all">("active");
@@ -166,10 +167,39 @@ export default function AdminUsersPage() {
       if (!auth.user) return setErr("Not signed in.");
       if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
 
+      // If no id -> create a new Auth user via Edge Function and upsert profile
       if (!form.id) {
-        throw new Error(
-          "Auth user creation is not wired yet (Edge Function admin_upsert_user). For now, edit existing users only."
-        );
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+        const token = auth.session?.access_token;
+        if (!token) return setErr("Not signed in.");
+
+        const resp = await fetch(`${supabaseUrl}/functions/v1/admin_upsert_user`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ email, full_name, role, status, home_store_id }),
+        });
+
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(json?.error ?? "Failed to create user.");
+        }
+
+        const newUserId = json?.id;
+        if (!newUserId) throw new Error("No user id returned from admin_upsert_user.");
+
+        // Refresh and select the newly created user
+        await load();
+        const created = (users ?? []).find((u) => u.id === newUserId);
+        if (created) {
+          pickUser(created);
+        }
+
+        // Show a short-lived notice with temp password
+        if (json?.tempPassword) setNotice(`User created. Temp password: ${json.tempPassword}`);
+        return;
       }
 
       const payload = {
@@ -286,6 +316,7 @@ export default function AdminUsersPage() {
         <h2 style={{ marginTop: 0 }}>{form.id ? "Edit User (Profile)" : "Create User (Not Wired Yet)"}</h2>
 
         {err ? <div style={{ color: "crimson", marginBottom: 10 }}>{err}</div> : null}
+        {notice ? <div style={{ color: "green", marginBottom: 10 }}>{notice}</div> : null}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, maxWidth: 820 }}>
           <label>
