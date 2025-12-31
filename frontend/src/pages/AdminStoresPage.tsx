@@ -163,6 +163,7 @@ export default function AdminStoresPage() {
               </div>
             </div>
           ))}
+          {list.length === 0 ? <div style={{ color: "#666" }}>No stores found.</div> : null}
         </div>
       </div>
 

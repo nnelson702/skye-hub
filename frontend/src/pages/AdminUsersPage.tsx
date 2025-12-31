@@ -271,13 +271,19 @@ export default function AdminUsersPage() {
               style={{ width: "100%", padding: 8 }}
             >
               <option value="">— None —</option>
-              {stores
-                .filter((s) => String(s.status).toLowerCase() === "active")
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.store_name} (ACE {s.ace_store_number})
-                  </option>
-                ))}
+              {stores.length === 0 ? (
+                <option value="" disabled>
+                  (no stores available)
+                </option>
+              ) : (
+                stores
+                  .filter((s) => String(s.status).toLowerCase() === "active")
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.store_name} (ACE {s.ace_store_number})
+                    </option>
+                  ))
+              )}
             </select>
           </label>
 
