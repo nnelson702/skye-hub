@@ -79,7 +79,6 @@ export default function AdminStoresPage() {
     setErr(null);
 
     const payload = {
-      ...form,
       ace_store_number: form.ace_store_number.trim(),
       pos_store_number: form.pos_store_number.trim(),
       store_name: form.store_name.trim(),
@@ -100,13 +99,36 @@ export default function AdminStoresPage() {
     if (!payload.store_name) return setErr("Store Name is required.");
 
     try {
-      const { error } = await supabase.from("stores").upsert(payload, { onConflict: "id" });
+      // If form.id is falsy -> create new store (omit id so DB can generate it)
+      if (!form.id) {
+        const { error } = await supabase.from("stores").insert(payload).select();
+        if (error) throw error;
+        // ensure we refresh the list with the newly created store included
+        await load();
+        // If desired, pick the newly created item into the form (keep simple: clear form)
+        clear();
+        return;
+      }
+
+      // Existing store -> update via upsert (id present)
+      const { error } = await supabase.from("stores").upsert({ ...payload, id: form.id }, { onConflict: "id" });
       if (error) throw error;
 
       await load();
       clear();
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
+      // Safe message extraction with JSON fallback
+      let message = "Save failed.";
+      if (e instanceof Error) message = e.message;
+      else if (typeof e === "string") message = e;
+      else {
+        try {
+          message = JSON.stringify(e as object);
+        } catch {
+          message = String(e);
+        }
+      }
+      console.error("AdminStoresPage save error:", e);
       setErr(message || "Save failed.");
     }
   };

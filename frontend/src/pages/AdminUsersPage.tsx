@@ -44,6 +44,7 @@ export default function AdminUsersPage() {
     setErr(null);
 
     try {
+      // Load stores and users in parallel; surface exact store errors when present
       const [{ data: storeData, error: storeErr }, { data: userData, error: userErr }] =
         await Promise.all([
           supabase
@@ -62,7 +63,17 @@ export default function AdminUsersPage() {
       setStores((storeData ?? []) as StoreRow[]);
       setUsers((userData ?? []) as UserProfile[]);
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
+      let message = "Failed to load users.";
+      if (e instanceof Error) message = e.message;
+      else if (typeof e === "string") message = e;
+      else {
+        try {
+          message = JSON.stringify(e as object);
+        } catch {
+          message = String(e);
+        }
+      }
+      console.error("AdminUsersPage load error:", e);
       setErr(message || "Failed to load users.");
     } finally {
       setLoading(false);
