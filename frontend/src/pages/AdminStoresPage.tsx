@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { useAuth } from "../auth/AuthProvider";
+import { formatError } from "../lib/errors";
 
 type StoreRow = {
   id: string;
@@ -50,6 +52,10 @@ export default function AdminStoresPage() {
     setLoading(true);
     setErr(null);
     try {
+      const userId = auth.user?.id ?? null;
+      const role = auth.profile?.role ?? null;
+      console.log(`AdminStoresPage: fetching stores as user=${userId} role=${role}`);
+
       const { data, error } = await supabase
         .from("stores")
         .select(
@@ -60,23 +66,48 @@ export default function AdminStoresPage() {
 
       if (error) throw error;
       setStores((data ?? []) as StoreRow[]);
+      console.log("AdminStoresPage: fetched stores:", (data ?? []).length);
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      setErr(message || "Failed to load stores.");
+      const message = formatError(e) || "Failed to load stores.";
+      console.error("AdminStoresPage load error:", e);
+      setErr(message);
     } finally {
       setLoading(false);
     }
   };
 
+  const auth = useAuth();
+
   useEffect(() => {
+    // Wait for auth/session and profile readiness before fetching protected data
+    if (!auth.authReady || !auth.profileReady) return;
+
+    if (!auth.user) {
+      setErr("Not signed in.");
+      setLoading(false);
+      return;
+    }
+
+    if (!auth.profile || auth.profile.role !== "Admin") {
+      setErr("Not authorized.");
+      setLoading(false);
+      return;
+    }
+
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.authReady, auth.profileReady, auth.user, auth.profile?.role]);
 
   const pick = (s: StoreRow) => setForm({ ...s });
   const clear = () => setForm(empty());
 
   const save = async () => {
     setErr(null);
+
+    if (!auth.user) {
+      setErr("Not signed in. Please sign in and try again.");
+      return;
+    }
 
     const payload = {
       ace_store_number: form.ace_store_number.trim(),
@@ -117,19 +148,9 @@ export default function AdminStoresPage() {
       await load();
       clear();
     } catch (e: unknown) {
-      // Safe message extraction with JSON fallback
-      let message = "Save failed.";
-      if (e instanceof Error) message = e.message;
-      else if (typeof e === "string") message = e;
-      else {
-        try {
-          message = JSON.stringify(e as object);
-        } catch {
-          message = String(e);
-        }
-      }
+      const message = formatError(e) || "Save failed.";
       console.error("AdminStoresPage save error:", e);
-      setErr(message || "Save failed.");
+      setErr(message);
     }
   };
 

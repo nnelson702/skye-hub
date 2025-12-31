@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { useAuth } from "../auth/AuthProvider";
+import { formatError } from "../lib/errors";
 import type { UserProfile, UserRole, UserStatus } from "../types/profile";
 
 type StoreRow = {
@@ -39,11 +41,14 @@ export default function AdminUsersPage() {
 
   const [form, setForm] = useState({ ...emptyForm });
 
+  const auth = useAuth();
+
   const load = async () => {
     setLoading(true);
     setErr(null);
 
     try {
+      console.log(`AdminUsersPage: fetching stores+users as user=${auth.user?.id ?? null} role=${auth.profile?.role ?? null}`);
       // Load stores and users in parallel; surface exact store errors when present
       const [{ data: storeData, error: storeErr }, { data: userData, error: userErr }] =
         await Promise.all([
@@ -62,27 +67,35 @@ export default function AdminUsersPage() {
 
       setStores((storeData ?? []) as StoreRow[]);
       setUsers((userData ?? []) as UserProfile[]);
+      console.log("AdminUsersPage: fetched stores:", (storeData ?? []).length, "users:", (userData ?? []).length);
     } catch (e: unknown) {
-      let message = "Failed to load users.";
-      if (e instanceof Error) message = e.message;
-      else if (typeof e === "string") message = e;
-      else {
-        try {
-          message = JSON.stringify(e as object);
-        } catch {
-          message = String(e);
-        }
-      }
+      const message = formatError(e) || "Failed to load users.";
       console.error("AdminUsersPage load error:", e);
-      setErr(message || "Failed to load users.");
+      setErr(message);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    // Wait for auth and profile readiness
+    if (!auth.authReady || !auth.profileReady) return;
+
+    if (!auth.user) {
+      setErr("Not signed in.");
+      setLoading(false);
+      return;
+    }
+
+    if (!auth.profile || auth.profile.role !== "Admin") {
+      setErr("Not authorized.");
+      setLoading(false);
+      return;
+    }
+
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.authReady, auth.profileReady, auth.user, auth.profile?.role]);
 
   const filteredUsers = useMemo(() => {
     const t = filterText.trim().toLowerCase();
@@ -126,11 +139,14 @@ export default function AdminUsersPage() {
     if (!email) return setErr("Email is required.");
     if (!isAdmin && !home_store_id) return setErr("Non-admin users must have a Home Store.");
 
-    try {
+      try {
       // IMPORTANT:
       // Without an Edge Function (service role), we cannot create Supabase Auth users from the browser safely.
       // So this screen currently manages PROFILES ONLY.
       // For now, we generate an id only when editing an existing profile.
+      if (!auth.user) return setErr("Not signed in.");
+      if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
+
       if (!form.id) {
         throw new Error(
           "Auth user creation is not wired yet (Edge Function admin_upsert_user). For now, edit existing users only."
@@ -153,8 +169,8 @@ export default function AdminUsersPage() {
       // Keep selection in place
       setForm((prev) => ({ ...prev, full_name, email, role, status, home_store_id: home_store_id ?? "" }));
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      setErr(message || "Save failed.");
+      const message = formatError(e) || "Save failed.";
+      setErr(message);
     }
   };
 
