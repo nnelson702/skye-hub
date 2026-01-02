@@ -142,11 +142,19 @@ export default function AdminStoresPage() {
 
     console.log(`AdminStoresPage: saving store id=${form.id || '<new>'} status=${payload.status}`);
 
+    type SupabaseRes = { data?: Array<Partial<StoreRow>> | null; error?: unknown };
+
     try {
       // If form.id is falsy -> create new store (omit id so DB can generate it)
       if (!form.id) {
-        const { error } = await supabase.from("stores").insert(payload).select();
-        if (error) throw error;
+        const insertRes = await supabase.from("stores").insert(payload).select();
+        const { data: insertData, error: insertErr } = insertRes as unknown as SupabaseRes;
+        console.groupCollapsed("AdminStoresPage: save response (insert)");
+        console.log("payload", { id: form.id ?? null, status: payload.status });
+        console.log("response", insertRes);
+        if (insertData && insertData.length) console.log("inserted status", insertData[0].status);
+        console.groupEnd();
+        if (insertErr) throw insertErr;
         // ensure we refresh the list with the newly created store included
         await load();
         // If desired, pick the newly created item into the form (keep simple: clear form)
@@ -156,8 +164,14 @@ export default function AdminStoresPage() {
       }
 
       // Existing store -> update via upsert (id present)
-      const { error } = await supabase.from("stores").upsert({ ...payload, id: form.id }, { onConflict: "id" });
-      if (error) throw error;
+      const upsertRes = await supabase.from("stores").upsert({ ...payload, id: form.id }, { onConflict: "id" }).select();
+      const { data: upsertData, error: upsertErr } = upsertRes as unknown as SupabaseRes;
+      console.groupCollapsed("AdminStoresPage: save response (upsert)");
+      console.log("payload", { id: form.id, status: payload.status });
+      console.log("response", upsertRes);
+      if (upsertData && upsertData.length) console.log("upserted status", upsertData[0].status);
+      console.groupEnd();
+      if (upsertErr) throw upsertErr;
 
       await load();
       clear();
