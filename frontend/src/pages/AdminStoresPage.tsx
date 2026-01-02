@@ -46,6 +46,9 @@ export default function AdminStoresPage() {
 
   const [form, setForm] = useState<StoreRow>(empty());
 
+  // Enable temporary debug diagnostics by setting VITE_DEBUG_ADMIN=true in your .env
+  const DEBUG = import.meta.env.VITE_DEBUG_ADMIN === "true";
+
   const load = async () => {
     setLoading(true);
     setErr(null);
@@ -147,13 +150,17 @@ export default function AdminStoresPage() {
     try {
       // If form.id is falsy -> create new store (omit id so DB can generate it)
       if (!form.id) {
-        const insertRes = await supabase.from("stores").insert(payload).select();
+        // Insert: only request returned rows when DEBUG is enabled so we don't change default behavior
+        const insertQuery = supabase.from("stores").insert(payload);
+        const insertRes = DEBUG ? await insertQuery.select() : await insertQuery;
         const { data: insertData, error: insertErr } = insertRes as unknown as SupabaseRes;
-        console.groupCollapsed("AdminStoresPage: save response (insert)");
-        console.log("payload", { id: form.id ?? null, status: payload.status });
-        console.log("response", insertRes);
-        if (insertData && insertData.length) console.log("inserted status", insertData[0].status);
-        console.groupEnd();
+        if (DEBUG) {
+          console.groupCollapsed("AdminStoresPage: save response (insert)");
+          console.log("payload", { id: form.id ?? null, status: payload.status });
+          console.log("response", insertRes);
+          if (insertData && insertData.length) console.log("inserted status", insertData[0].status);
+          console.groupEnd();
+        }
         if (insertErr) throw insertErr;
         // ensure we refresh the list with the newly created store included
         await load();
@@ -164,13 +171,16 @@ export default function AdminStoresPage() {
       }
 
       // Existing store -> update via upsert (id present)
-      const upsertRes = await supabase.from("stores").upsert({ ...payload, id: form.id }, { onConflict: "id" }).select();
+      const upsertQuery = supabase.from("stores").upsert({ ...payload, id: form.id }, { onConflict: "id" });
+      const upsertRes = DEBUG ? await upsertQuery.select() : await upsertQuery;
       const { data: upsertData, error: upsertErr } = upsertRes as unknown as SupabaseRes;
-      console.groupCollapsed("AdminStoresPage: save response (upsert)");
-      console.log("payload", { id: form.id, status: payload.status });
-      console.log("response", upsertRes);
-      if (upsertData && upsertData.length) console.log("upserted status", upsertData[0].status);
-      console.groupEnd();
+      if (DEBUG) {
+        console.groupCollapsed("AdminStoresPage: save response (upsert)");
+        console.log("payload", { id: form.id, status: payload.status });
+        console.log("response", upsertRes);
+        if (upsertData && upsertData.length) console.log("upserted status", upsertData[0].status);
+        console.groupEnd();
+      }
       if (upsertErr) throw upsertErr;
 
       await load();
