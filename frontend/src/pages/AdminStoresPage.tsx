@@ -63,12 +63,24 @@ export default function AdminStoresPage() {
         .order("store_name", { ascending: true });
 
       if (error) throw error;
-      setStores((data ?? []) as StoreRow[]);
-      console.log("AdminStoresPage: fetched stores:", (data ?? []).length);
+      // Normalize server responses: some environments may return legacy column `store_email`.
+      const normalized = (data ?? []).map((r: Partial<StoreRow> & { store_email?: string }) => ({
+        ...r,
+        email: r.email ?? r.store_email ?? null,
+      })) as StoreRow[];
+      const hadLegacy = (data ?? []).some((r: Partial<StoreRow> & { store_email?: string }) => r.store_email !== undefined);
+      if (hadLegacy) console.warn("AdminStoresPage: normalized legacy column `store_email` to `email`");
+      setStores(normalized);
+      console.log("AdminStoresPage: fetched stores:", normalized.length);
     } catch (e: unknown) {
       const message = formatError(e) || "Failed to load stores.";
       console.error("AdminStoresPage load error:", e);
-      setErr(message);
+      // If the error mentions a non-existent column like store_email, provide a clearer message
+      if (String(message).includes("store_email")) {
+        setErr("Server query references non-existent column `store_email`. Expected column is `email`. Please update server-side query or report to the backend team.");
+      } else {
+        setErr(message);
+      }
     } finally {
       setLoading(false);
     }

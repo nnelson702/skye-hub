@@ -10,6 +10,7 @@ type StoreRow = {
   pos_store_number: string;
   store_name: string;
   status: string;
+  email?: string | null;
 };
 
 const ROLES: UserRole[] = ["Admin", "Manager", "Lead", "Employee"];
@@ -66,9 +67,13 @@ export default function AdminUsersPage() {
       if (storeErr) throw storeErr;
       if (userErr) throw userErr;
 
-      setStores((storeData ?? []) as StoreRow[]);
+      // Normalize stores in case server uses legacy `store_email` column
+      const normalizedStores = (storeData ?? []).map((r: Partial<StoreRow> & { store_email?: string }) => ({ ...r, email: r.email ?? r.store_email ?? null })) as StoreRow[];
+      const hadLegacy = (storeData ?? []).some((r: Partial<StoreRow> & { store_email?: string }) => r.store_email !== undefined);
+      if (hadLegacy) console.warn("AdminUsersPage: normalized legacy column `store_email` to `email`");
+      setStores(normalizedStores);
       setUsers((userData ?? []) as UserProfile[]);
-      console.log("AdminUsersPage: fetched stores:", (storeData ?? []).length, "users:", (userData ?? []).length);
+      console.log("AdminUsersPage: fetched stores:", normalizedStores.length, "users:", (userData ?? []).length);
     } catch (e: unknown) {
       const message = formatError(e) || "Failed to load users.";
       console.error("AdminUsersPage load error:", e);
