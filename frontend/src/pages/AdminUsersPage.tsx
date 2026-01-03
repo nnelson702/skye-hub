@@ -115,15 +115,22 @@ export default function AdminUsersPage() {
     });
   }, [users, filterText, filterStatus]);
 
-  const [assignedStoreIds, setAssignedStoreIds] = useState<string[]>([]);
-  const [assignLoading, setAssignLoading] = useState(false);
+  // Assignment state for inline checklist
+  const [initialAssignedStoreIds, setInitialAssignedStoreIds] = useState<string[]>([]);
+  const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
 
   const loadAssignments = async (userId: string) => {
-    if (!userId) return setAssignedStoreIds([]);
+    if (!userId) {
+      setInitialAssignedStoreIds([]);
+      setSelectedStoreIds([]);
+      return;
+    }
     try {
       const { data, error } = await supabase.from("user_store_access").select("store_id").eq("user_id", userId);
       if (error) throw error;
-      setAssignedStoreIds((data ?? []).map((r: { store_id: string }) => r.store_id));
+      const ids = (data ?? []).map((r: { store_id: string }) => r.store_id);
+      setInitialAssignedStoreIds(ids);
+      setSelectedStoreIds(ids);
     } catch (e: unknown) {
       console.error("loadAssignments error:", e);
       setErr(formatError(e) || "Failed to load assigned stores.");
@@ -146,7 +153,8 @@ export default function AdminUsersPage() {
 
   const clear = () => {
     setForm({ ...emptyForm });
-    setAssignedStoreIds([]);
+    setInitialAssignedStoreIds([]);
+    setSelectedStoreIds([]);
   };
 
   const saveProfileOnly = async () => {
@@ -213,14 +221,55 @@ export default function AdminUsersPage() {
 
       console.log(`AdminUsersPage: saving profile id=${form.id || '<new>'} home_store_id=${payload.home_store_id} must_reset=${payload.must_reset_password}`);
 
+      // Upsert profile
       const { error } = await supabase.from("user_profiles").upsert(payload, { onConflict: "id" });
       if (error) throw error;
 
-      await load();
-      // Keep selection in place
-      setForm((prev) => ({ ...prev, full_name, email, role, status, home_store_id: home_store_id ?? "" }));
-      // reload assignments if this user's id present
-      if (form.id) await loadAssignments(form.id);
+      // If this was a new (pre-provision) profile, ensure we have an id to operate on
+      const profileId = form.id || payload.id;
+
+      // Apply assignment diffs (inserts/deletes)
+      const applyAssignmentDiff = async (userId: string) => {
+          const prev = initialAssignedStoreIds ?? [];
+          const now = selectedStoreIds ?? [];
+          const toAdd = now.filter((x) => !prev.includes(x));
+          const toRemove = prev.filter((x) => !now.includes(x));
+
+          const adminId = auth.user?.id;
+          if (!adminId) throw new Error("Not signed in.");
+
+          if (toAdd.length) {
+            const inserts = toAdd.map((store_id) => ({ user_id: userId, store_id, assigned_by: adminId }));
+            const { error: insErr } = await supabase.from("user_store_access").insert(inserts).select();
+            if (insErr) throw insErr;
+          }
+
+          if (toRemove.length) {
+            const { error: delErr } = await supabase.from("user_store_access").delete().in("store_id", toRemove).eq("user_id", userId);
+            if (delErr) throw delErr;
+          }
+
+          // refresh assignments
+          await loadAssignments(userId);
+      };
+
+      // If we created a pre-provisioned profile (no form.id before), ensure we select it and then apply assignments
+      if (!form.id) {
+        await load();
+        const created = (users ?? []).find((u) => u.id === profileId);
+        if (created) pickUser(created);
+        // apply selected assignments (initialAssignedStoreIds will be [])
+        if (selectedStoreIds && selectedStoreIds.length) {
+          await applyAssignmentDiff(profileId);
+        }
+      } else {
+        // Existing user: reload and apply diffs
+        await load();
+        await applyAssignmentDiff(profileId);
+        // Keep selection in place
+        setForm((prev) => ({ ...prev, full_name, email, role, status, home_store_id: home_store_id ?? "" }));
+      }
+
       console.log("AdminUsersPage: save complete ok=true");
     } catch (e: unknown) {
       const message = formatError(e) || "Save failed.";
@@ -230,54 +279,6 @@ export default function AdminUsersPage() {
     }
   };
 
-  const addAssignment = async (storeId: string) => {
-    if (!auth.user) return setErr("Not signed in.");
-    if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
-    if (!form.id) return setErr("Select a user first.");
-
-    console.log(`AdminUsersPage: addAssignment user=${form.id} store=${storeId}`);
-    setAssignLoading(true);
-    setErr(null);
-    try {
-      const payload = {
-        user_id: form.id,
-        store_id: storeId,
-        assigned_by: auth.user.id,
-      };
-      const { error } = await supabase.from("user_store_access").insert(payload).select();
-      if (error) throw error;
-      await loadAssignments(form.id);
-      console.log(`AdminUsersPage: addAssignment done ok=true`);
-    } catch (e: unknown) {
-      console.error("addAssignment error:", e);
-      setErr(formatError(e) || "Failed to add store assignment.");
-      console.log(`AdminUsersPage: addAssignment done ok=false`);
-    } finally {
-      setAssignLoading(false);
-    }
-  };
-
-  const removeAssignment = async (storeId: string) => {
-    if (!auth.user) return setErr("Not signed in.");
-    if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
-    if (!form.id) return setErr("Select a user first.");
-
-    console.log(`AdminUsersPage: removeAssignment user=${form.id} store=${storeId}`);
-    setAssignLoading(true);
-    setErr(null);
-    try {
-      const { error } = await supabase.from("user_store_access").delete().match({ user_id: form.id, store_id: storeId });
-      if (error) throw error;
-      await loadAssignments(form.id);
-      console.log(`AdminUsersPage: removeAssignment done ok=true`);
-    } catch (e: unknown) {
-      console.error("removeAssignment error:", e);
-      setErr(formatError(e) || "Failed to remove store assignment.");
-      console.log(`AdminUsersPage: removeAssignment done ok=false`);
-    } finally {
-      setAssignLoading(false);
-    }
-  };
 
   // Show loading indicator while initial load is running
   if (loading) return <div>Loading…</div>;
@@ -419,53 +420,37 @@ export default function AdminUsersPage() {
         </div>
 
         <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>Assigned Stores</div>
-          {form.id ? (
-            <>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <select id="assign-store" style={{ padding: 8 }}>
-                  <option value="">— select store —</option>
-                  {stores
-                    .filter((s) => s.status === "active" && !assignedStoreIds.includes(s.id))
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.store_name} (ACE {s.ace_store_number})
-                      </option>
-                    ))}
-                </select>
-                <button
-                  onClick={() => {
-                    const sel = (document.getElementById("assign-store") as HTMLSelectElement).value;
-                    if (sel) void addAssignment(sel);
-                  }}
-                  disabled={assignLoading}
-                >
-                  Add
-                </button>
-              </div>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Store Access</div>
 
-              <div style={{ marginTop: 8 }}>
-                {assignedStoreIds.length === 0 ? (
-                  <div style={{ color: "#666" }}>No assigned stores.</div>
-                ) : (
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {assignedStoreIds.map((sid) => {
-                      const s = stores.find((x) => x.id === sid);
-                      return (
-                        <div key={sid} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                          <div>{s ? `${s.store_name} (ACE ${s.ace_store_number})` : sid}</div>
-                          <button onClick={() => void removeAssignment(sid)} disabled={assignLoading}>
-                            Remove
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </>
+          {stores.length === 0 ? (
+            <div style={{ color: "#666" }}>(no stores available)</div>
           ) : (
-            <div style={{ color: "#666" }}>Select a user to manage store access.</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {stores.map((s) => {
+                const disabled = !form.id; // disable until profile exists
+                const checked = selectedStoreIds.includes(s.id);
+                return (
+                  <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      disabled={disabled}
+                      checked={checked}
+                      onChange={() => {
+                        if (disabled) return;
+                        setSelectedStoreIds((prev) => (prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id]));
+                      }}
+                    />
+                    <div>
+                      {s.store_name} {s.status !== "active" ? "(inactive)" : ""} (ACE {s.ace_store_number})
+                    </div>
+                  </label>
+                );
+              })}
+
+              {!form.id ? (
+                <div style={{ color: "#666" }}>Create the user first, then assign store access.</div>
+              ) : null}
+            </div>
           )}
         </div>
 
