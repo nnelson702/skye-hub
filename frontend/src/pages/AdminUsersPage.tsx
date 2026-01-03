@@ -34,9 +34,9 @@ export default function AdminUsersPage() {
       role: "Employee" as UserRole,
       status: "active" as UserStatus,
       home_store_id: "" as string,
-      // NOTE: we are NOT storing force_password_reset anywhere (column does not exist).
-      // The real implementation will be via Edge Function (service role) to create/invite auth users.
-      request_password_reset: true,
+      // NOTE: we store `must_reset_password` on the profile so Admins can require a password reset.
+      // This UI pre-provisions profiles only (no Auth user creation).
+      must_reset_password: false,
     }),
     []
   );
@@ -60,7 +60,7 @@ export default function AdminUsersPage() {
             .order("store_name", { ascending: true }),
           supabase
             .from("user_profiles")
-            .select("id, full_name, email, role, status, home_store_id")
+            .select("id, full_name, email, role, status, home_store_id, must_reset_password")
             .order("full_name", { ascending: true }),
         ]);
 
@@ -139,7 +139,7 @@ export default function AdminUsersPage() {
       role: (u.role as UserRole) ?? "Employee",
       status: (u.status as UserStatus) ?? "active",
       home_store_id: u.home_store_id ?? "",
-      request_password_reset: true,
+      must_reset_password: u.must_reset_password ?? false,
     });
     void loadAssignments(u.id);
   };
@@ -172,55 +172,32 @@ export default function AdminUsersPage() {
       if (!auth.user) return setErr("Not signed in.");
       if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
 
-      // If no id -> create a new Auth user via Edge Function and upsert profile
+      // If no id -> PRE-PROVISION a profile row (no Auth user is created from the browser)
       if (!form.id) {
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-        const token = auth.session?.access_token;
-        if (!token) return setErr("Not signed in.");
+        const winCrypto = (globalThis as unknown) as { crypto?: Crypto & { randomUUID?: () => string } };
+        const newId = winCrypto.crypto?.randomUUID?.() ?? `preprov-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const insertPayload = {
+          id: newId,
+          full_name,
+          email,
+          role,
+          status,
+          home_store_id,
+          must_reset_password: form.must_reset_password ? true : false,
+        };
 
-        console.log(`AdminUsersPage: invoking admin_upsert_user for email=${email}`);
-        const resp = await fetch(`${supabaseUrl}/functions/v1/admin_upsert_user`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ email, full_name, role, status, home_store_id }),
-        });
-
-        const json = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-          // Provide actionable errors
-          if (resp.status === 404) {
-            setErr("admin_upsert_user function not found / not deployed (404). Deploy the function or check its name.");
-          } else if (resp.status === 401) {
-            setErr("Unauthorized: invalid or missing token when calling admin_upsert_user.");
-          } else if (resp.status === 403) {
-            setErr("Forbidden: caller is not authorized to create users (ensure you are an Admin and function allows calls).");
-          } else {
-            setErr(formatError(json) || `admin_upsert_user failed with status ${resp.status}`);
-          }
-          console.log(`AdminUsersPage: admin_upsert_user done ok=false status=${resp.status}`);
-          return;
+        console.log(`AdminUsersPage: pre-provision profile id=${newId} email=${email}`);
+        const { data: insertData, error: insertErr } = await supabase.from("user_profiles").insert(insertPayload).select();
+        if (insertErr) {
+          throw insertErr;
         }
 
-        const newUserId = json?.id;
-        if (!newUserId) {
-          setErr("No user id returned from admin_upsert_user.");
-          console.log("AdminUsersPage: admin_upsert_user done ok=false missing id");
-          return;
-        }
-
-        // Refresh and select the newly created user
         await load();
-        const created = (users ?? []).find((u) => u.id === newUserId);
-        if (created) {
-          pickUser(created);
-        }
+        const created = (insertData ?? [])[0] ?? (users ?? []).find((u) => u.id === newId);
+        if (created) pickUser(created as UserProfile);
 
-        // Show a short-lived notice with temp password
-        if (json?.tempPassword) setNotice(`User created. Temp password: ${json.tempPassword}`);
-        console.log(`AdminUsersPage: admin_upsert_user done ok=true id=${newUserId}`);
+        setNotice("User pre-provisioned. User must sign up/login with this email to activate access.");
+        console.log(`AdminUsersPage: pre-provision done ok=true id=${newId}`);
         return;
       }
 
@@ -231,7 +208,7 @@ export default function AdminUsersPage() {
         role,
         status,
         home_store_id,
-        must_reset_password: form.request_password_reset ? true : false,
+        must_reset_password: form.must_reset_password ? true : false,
       };
 
       console.log(`AdminUsersPage: saving profile id=${form.id || '<new>'} home_store_id=${payload.home_store_id} must_reset=${payload.must_reset_password}`);
@@ -347,7 +324,7 @@ export default function AdminUsersPage() {
       </div>
 
       <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 14 }}>
-        <h2 style={{ marginTop: 0 }}>{form.id ? "Edit User (Profile)" : "Create User (Not Wired Yet)"}</h2>
+        <h2 style={{ marginTop: 0 }}>{form.id ? "Edit User (Profile)" : "Create User (Pre-provision)"}</h2>
 
         {err ? <div style={{ color: "crimson", marginBottom: 10 }}>{err}</div> : null}
         {notice ? <div style={{ color: "green", marginBottom: 10 }}>{notice}</div> : null}
@@ -427,11 +404,11 @@ export default function AdminUsersPage() {
           <label style={{ gridColumn: "1 / span 2", display: "flex", alignItems: "center", gap: 8 }}>
             <input
               type="checkbox"
-              checked={form.request_password_reset}
-              onChange={(e) => setForm((p) => ({ ...p, request_password_reset: e.target.checked }))}
+              checked={form.must_reset_password}
+              onChange={(e) => setForm((p) => ({ ...p, must_reset_password: e.target.checked }))}
             />
             <div>
-              Force password reset (note: this is not stored yet; real user creation requires Edge Function)
+              Force password reset (sets <code>must_reset_password</code> on the profile; user must sign up/login to activate account)
             </div>
           </label>
         </div>
@@ -498,8 +475,7 @@ export default function AdminUsersPage() {
             <li>Non-admin users must have a Home Store.</li>
             <li>This screen currently manages <b>user_profiles only</b>.</li>
             <li>
-              Next step: implement <b>Edge Function admin_upsert_user</b> (service role) so Admin can create Auth users,
-              then use the Auth user id as user_profiles.id.
+              This screen pre-provisions <b>user_profiles</b> only; Admins can create profiles here and optionally run a backend job to link an Auth user later. Users must sign up/login with the email to activate access.
             </li>
           </ul>
         </div>

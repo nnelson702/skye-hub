@@ -8,4 +8,5 @@ export type UserProfile = {
   role: UserRole;
   status: UserStatus;
   home_store_id: string | null;
+  must_reset_password?: boolean;
 };
