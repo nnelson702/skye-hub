@@ -42,6 +42,9 @@ export default function AdminUsersPage() {
   );
 
   const [form, setForm] = useState({ ...emptyForm });
+  // Invite flow controls
+  const [inviteByEmail, setInviteByEmail] = useState<boolean>(true);
+  const [tempPassword, setTempPassword] = useState<string>("");
 
   const auth = useAuth();
 
@@ -180,32 +183,91 @@ export default function AdminUsersPage() {
       if (!auth.user) return setErr("Not signed in.");
       if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
 
-      // If no id -> PRE-PROVISION a profile row (no Auth user is created from the browser)
+      // If no id -> create a real Auth user via Edge Function (invite-by-email preferred)
       if (!form.id) {
-        const winCrypto = (globalThis as unknown) as { crypto?: Crypto & { randomUUID?: () => string } };
-        const newId = winCrypto.crypto?.randomUUID?.() ?? `preprov-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const insertPayload = {
-          id: newId,
-          full_name,
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+        const token = auth.session?.access_token;
+        if (!token) return setErr("Not signed in.");
+
+        const payload = {
           email,
+          full_name,
           role,
           status,
           home_store_id,
-          must_reset_password: form.must_reset_password ? true : false,
+          invite: inviteByEmail,
+          tempPassword: inviteByEmail ? undefined : (tempPassword || undefined),
+          redirectTo: `${window.location.origin}/reset-password`,
         };
 
-        console.log(`AdminUsersPage: pre-provision profile id=${newId} email=${email}`);
-        const { data: insertData, error: insertErr } = await supabase.from("user_profiles").insert(insertPayload).select();
-        if (insertErr) {
-          throw insertErr;
+        console.log(`AdminUsersPage: admin_create_user invite=${inviteByEmail} email=${email}`);
+        const resp = await fetch(`${supabaseUrl}/functions/v1/admin_create_user`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          if (resp.status === 404) {
+            setErr("admin_create_user function not found / not deployed (404). Deploy the function or check its name.");
+          } else if (resp.status === 401) {
+            setErr("Unauthorized: invalid or missing token when calling admin_create_user.");
+          } else if (resp.status === 403) {
+            setErr("Forbidden: caller is not authorized to create users (ensure you are an Admin and function allows calls).");
+          } else {
+            setErr(formatError(json) || `admin_create_user failed with status ${resp.status}`);
+          }
+          console.log(`AdminUsersPage: admin_create_user done ok=false status=${resp.status}`);
+          return;
         }
 
-        await load();
-        const created = (insertData ?? [])[0] ?? (users ?? []).find((u) => u.id === newId);
-        if (created) pickUser(created as UserProfile);
+        const newUserId = json?.id;
+        if (!newUserId) {
+          setErr("No user id returned from admin_create_user.");
+          console.log("AdminUsersPage: admin_create_user done ok=false missing id");
+          return;
+        }
 
-        setNotice("User pre-provisioned. User must sign up/login with this email to activate access.");
-        console.log(`AdminUsersPage: pre-provision done ok=true id=${newId}`);
+        // Refresh and select the newly created user
+        await load();
+        const created = (users ?? []).find((u) => u.id === newUserId);
+        if (created) pickUser(created);
+
+        // Show an appropriate notice
+        if (json?.inviteSent || json?.resetLink) setNotice(`Invite sent to ${email}.`);
+        else if (json?.tempPassword) setNotice(`User created. Temp password: ${json.tempPassword}`);
+        else setNotice("User created.");
+
+        // Apply any selected assignments (selectedStoreIds may have been set prior)
+        if (selectedStoreIds && selectedStoreIds.length) {
+          await (async () => {
+            const prev = initialAssignedStoreIds ?? [];
+            const now = selectedStoreIds ?? [];
+            const toAdd = now.filter((x) => !prev.includes(x));
+            const toRemove = prev.filter((x) => !now.includes(x));
+            const adminId = auth.user?.id;
+            if (!adminId) return setErr("Not signed in.");
+
+            if (toAdd.length) {
+              const inserts = toAdd.map((store_id) => ({ user_id: newUserId, store_id, assigned_by: adminId }));
+              const { error: insErr } = await supabase.from("user_store_access").insert(inserts).select();
+              if (insErr) return setErr(formatError(insErr) || "Failed to create assignments.");
+            }
+
+            if (toRemove.length) {
+              const { error: delErr } = await supabase.from("user_store_access").delete().in("store_id", toRemove).eq("user_id", newUserId);
+              if (delErr) return setErr(formatError(delErr) || "Failed to remove assignments.");
+            }
+
+            await loadAssignments(newUserId);
+          })();
+        }
+
+        console.log(`AdminUsersPage: admin_create_user done ok=true id=${newUserId}`);
         return;
       }
 
@@ -412,6 +474,32 @@ export default function AdminUsersPage() {
               Force password reset (sets <code>must_reset_password</code> on the profile; user must sign up/login to activate account)
             </div>
           </label>
+
+          <label style={{ gridColumn: "1 / span 2", display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" checked={inviteByEmail} onChange={(e) => setInviteByEmail(e.target.checked)} />
+            <div>Send invite email (recommended)</div>
+          </label>
+
+          {!inviteByEmail ? (
+            <label style={{ gridColumn: "1 / span 2" }}>
+              <div>Temporary Password (optional)</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={tempPassword}
+                  onChange={(e) => setTempPassword(e.target.value)}
+                  style={{ width: "100%", padding: 8 }}
+                />
+                <button
+                  onClick={() => setTempPassword(() => {
+                    const winCrypto = (globalThis as unknown) as { crypto?: Crypto & { randomUUID?: () => string } };
+                    return winCrypto.crypto?.randomUUID?.() ?? `tp-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+                  })}
+                >
+                  Generate
+                </button>
+              </div>
+            </label>
+          ) : null}
         </div>
 
         <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
