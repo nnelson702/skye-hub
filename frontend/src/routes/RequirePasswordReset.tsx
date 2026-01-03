@@ -1,7 +1,8 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
+import type { ReactNode } from "react";
 
-export default function RequirePasswordReset({ children }: { children: React.ReactNode }) {
+export default function RequirePasswordReset({ children }: { children: ReactNode }) {
   // Placeholder guard for later. We are NOT using user_profiles.force_password_reset (column does not exist).
   // Keeping this file so the app structure doesn't drift.
   const { booting, user } = useAuth();

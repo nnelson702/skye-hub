@@ -34,7 +34,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+import type { ReactNode } from "react";
+
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [booting, setBooting] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
