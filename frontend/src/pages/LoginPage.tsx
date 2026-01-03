@@ -5,11 +5,12 @@ import { useAuth } from "../auth/AuthProvider";
 
 export default function LoginPage() {
   const nav = useNavigate();
-  type LocationState = { from?: string };
-  const loc = useLocation() as { state?: LocationState };
+  type LocationState = { from?: string; inactive?: boolean };
+  const loc = useLocation() as { state?: LocationState | null };
   const { user } = useAuth();
 
   const from = useMemo(() => loc?.state?.from ?? "/", [loc]);
+  const inactive = useMemo(() => loc?.state?.inactive === true, [loc]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,6 +45,7 @@ export default function LoginPage() {
     <div style={{ maxWidth: 520 }}>
       <h1 style={{ marginTop: 0 }}>Login</h1>
 
+      {inactive ? <div style={{ color: "crimson", marginBottom: 12 }}>Account inactive. Contact admin.</div> : null}
       {err ? <div style={{ color: "crimson", marginBottom: 12 }}>{err}</div> : null}
 
       <div style={{ display: "grid", gap: 10 }}>

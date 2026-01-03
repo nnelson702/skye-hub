@@ -1,5 +1,5 @@
 export type UserRole = "Admin" | "Manager" | "Lead" | "Employee";
-export type UserStatus = "active" | "inactive";
+export type UserStatus = "active" | "inactive" | "deleted";
 
 export type UserProfile = {
   id: string; // should match Supabase Auth user id once we wire Edge Function admin_upsert_user

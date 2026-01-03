@@ -221,6 +221,9 @@ export default function AdminUsersPage() {
             setErr("Unauthorized: invalid or missing token when calling admin_create_user.");
           } else if (resp.status === 403) {
             setErr("Forbidden: caller is not authorized to create users (ensure you are an Admin and function allows calls).");
+          } else if (resp.status === 409) {
+            // Duplicate email
+            setErr("Email already exists. Use Send Password Reset.");
           } else {
             setErr(formatError(json) || `admin_create_user failed with status ${resp.status}`);
           }
@@ -352,6 +355,73 @@ export default function AdminUsersPage() {
     }
   };
 
+  const setUserStatus = async (newStatus: UserStatus, deleteAccess = false) => {
+    setErr(null);
+    setNotice(null);
+    if (!form.id) return setErr("Select a user first.");
+    if (!auth.user) return setErr("Not signed in.");
+    if (!auth.profile || auth.profile.role !== "Admin") return setErr("Not authorized.");
+
+    try {
+      const { error } = await supabase.from("user_profiles").update({ status: newStatus }).eq("id", form.id);
+      if (error) throw error;
+
+      if (deleteAccess) {
+        const { error: delErr } = await supabase.from("user_store_access").delete().eq("user_id", form.id);
+        if (delErr) throw delErr;
+      }
+
+      await load();
+      const updated = (users ?? []).find((u) => u.id === form.id);
+      if (updated) pickUser(updated);
+
+      setNotice(
+        newStatus === "deleted"
+          ? "User soft-deleted. Store access removed."
+          : newStatus === "inactive"
+          ? "User deactivated and store access removed."
+          : "User reactivated."
+      );
+    } catch (e: unknown) {
+      console.error("setUserStatus error:", e);
+      setErr(formatError(e) || "Failed to update user status.");
+    }
+  };
+
+  const sendPasswordReset = async () => {
+    setErr(null);
+    setNotice(null);
+    setLastInviteLink(null);
+    if (!form.email) return setErr("Email is required.");
+
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+      const token = auth.session?.access_token;
+      if (!token) return setErr("Not signed in.");
+
+      const resp = await fetch(`${supabaseUrl}/functions/v1/admin_create_user`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ mode: "reset", email: form.email, redirectTo: `${window.location.origin}/reset-password` }),
+      });
+
+      const json = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        if (resp.status === 404) setErr("admin_create_user function not found or user not found (404). Deploy the function or check its name.");
+        else setErr(formatError(json) || `Reset failed: status ${resp.status}`);
+        return;
+      }
+
+      setNotice("Password reset requested. Reset link (if generated) is shown below.");
+      setLastInviteLink(json?.resetLink ?? null);
+    } catch (e: unknown) {
+      console.error("sendPasswordReset error:", e);
+      setErr(formatError(e) || "Failed to send reset link.");
+    }
+  };
 
   // Show loading indicator while initial load is running
   if (loading) return <div>Loading…</div>;
@@ -389,7 +459,7 @@ export default function AdminUsersPage() {
             >
               <div style={{ fontWeight: 800 }}>{u.full_name}</div>
               <div style={{ color: "#555", fontSize: 13 }}>
-                {u.email} • {u.role} • {u.status}
+                {u.email} • {u.role} • <span style={{ color: u.status !== "active" ? "crimson" : "#555" }}>{u.status}</span>
               </div>
             </div>
           ))}
@@ -532,6 +602,47 @@ export default function AdminUsersPage() {
           <button onClick={() => void saveProfileOnly()}>Save</button>
           <button onClick={clear}>Clear / New</button>
         </div>
+
+        {form.id ? (
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            {form.status === "active" ? (
+              <button
+                onClick={async () => {
+                  // Deactivate: set status inactive and remove store access
+                  await setUserStatus("inactive", true);
+                }}
+              >
+                Deactivate
+              </button>
+            ) : (
+              <button
+                onClick={async () => {
+                  // Reactivate
+                  await setUserStatus("active", false);
+                }}
+              >
+                Reactivate
+              </button>
+            )}
+
+            <button
+              onClick={async () => {
+                // Soft delete: set status to deleted and remove store access
+                await setUserStatus("deleted", true);
+              }}
+            >
+              Soft Delete
+            </button>
+
+            <button
+              onClick={async () => {
+                await sendPasswordReset();
+              }}
+            >
+              Send Password Reset
+            </button>
+          </div>
+        ) : null}
 
         <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 12 }}>
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Store Access</div>

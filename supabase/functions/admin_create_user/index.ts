@@ -44,9 +44,36 @@ export default async function (req: Request): Promise<Response> {
     if (!callerRole || callerRole !== "Admin") return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
 
     const body = await req.json();
-    const { email, full_name, role, status, home_store_id, invite = true, tempPassword: providedTempPassword, redirectTo: reqRedirect } = body;
+    const { mode, email, full_name, role, status, home_store_id, invite = true, tempPassword: providedTempPassword, redirectTo: reqRedirect } = body;
 
-    if (!email || !full_name) return new Response(JSON.stringify({ error: "missing_fields" }), { status: 400 });
+    if (!email) return new Response(JSON.stringify({ error: "missing_fields" }), { status: 400 });
+
+    // If mode=reset, generate a reset link for an existing user without creating anything
+    if (mode === "reset") {
+      // Try to find the user by email
+      // @ts-expect-error allow admin API listUsers
+      const listResRaw = (await adminClient.auth.admin.listUsers?.({})) || { data: null, error: null };
+      type ListRes = { data?: { users?: Array<{ id: string; email?: string }> } | null; error?: unknown };
+      const listRes = listResRaw as unknown as ListRes;
+      const found = listRes?.data?.users?.find((u) => (u.email ?? "").toLowerCase() === email.toLowerCase());
+      if (!found) return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+
+      // Attempt to generate a reset link
+      try {
+        const redirectTo = reqRedirect ?? getEnv("HUB_REDIRECT_URL") ?? (getEnv("HUB_SITE_URL") ? `${getEnv("HUB_SITE_URL")}/reset-password` : undefined);
+        // @ts-expect-error: generateLink may exist on admin.auth
+        const linkResRaw = await adminClient.auth.admin.generateLink?.("reset", email, { redirectTo });
+        type LinkRes = { data?: { action_link?: string } | null } | null | undefined;
+        const linkRes = linkResRaw as unknown as LinkRes;
+        if (linkRes && linkRes.data && linkRes.data.action_link) {
+          return new Response(JSON.stringify({ ok: true, resetLink: linkRes.data.action_link as string }), { status: 200 });
+        }
+      } catch (e) {
+        console.warn("admin_create_user[reset]: generateLink failed", e);
+      }
+
+      return new Response(JSON.stringify({ ok: true, resetLink: null }), { status: 200 });
+    }
 
     // Validate required env vars and fail-fast with helpful message listing what we checked
     const checkedEnv = {
@@ -74,14 +101,18 @@ export default async function (req: Request): Promise<Response> {
     let userId: string | undefined = createRes?.data?.id;
 
     if (!userId) {
-      // Try to find existing user
+      // Try to find existing user - if found, we should not silently attach; return a duplicate error
       // @ts-expect-error allow admin API listUsers
       const listResRaw = (await adminClient.auth.admin.listUsers?.({})) || { data: null, error: null };
       type ListRes = { data?: { users?: Array<{ id: string; email?: string }> } | null; error?: unknown };
       const listRes = listResRaw as unknown as ListRes;
       const found = listRes?.data?.users?.find((u) => (u.email ?? "").toLowerCase() === email.toLowerCase());
-      if (!found) return new Response(JSON.stringify({ error: "create_user_failed" }), { status: 500 });
-      userId = found.id;
+      if (found) {
+        return new Response(JSON.stringify({ error: "email_exists", id: found.id }), { status: 409 });
+      }
+
+      // Nothing we can do
+      return new Response(JSON.stringify({ error: "create_user_failed" }), { status: 500 });
     }
 
     // Upsert profile record
