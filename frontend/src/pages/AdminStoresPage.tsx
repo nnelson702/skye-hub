@@ -1,16 +1,14 @@
-// frontend/src/pages/AdminStoresPage.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../auth/AuthProvider";
-
-type StoreStatus = "active" | "inactive";
+import { formatError } from "../lib/errors";
 
 type StoreRow = {
   id: string;
   ace_store_number: string;
-  pos_store_number: string | null;
+  pos_store_number: string;
   store_name: string;
-  store_email: string | null;
+  email: string | null;
   address_line1: string | null;
   address_line2: string | null;
   city: string | null;
@@ -18,281 +16,358 @@ type StoreRow = {
   postal_code: string | null;
   country: string | null;
   date_opened: string | null;
-  timezone: string | null;
   sort_order: number | null;
-  primary_manager_user_id: string | null;
-  status: StoreStatus;
+  timezone: string | null;
+  status: "active" | "inactive";
 };
 
-type UserOption = { id: string; full_name: string | null; email: string | null; role: string | null };
+const empty = (): StoreRow => ({
+  id: "",
+  ace_store_number: "",
+  pos_store_number: "",
+  store_name: "",
+  email: "",
+  address_line1: "",
+  address_line2: "",
+  city: "",
+  state: "NV",
+  postal_code: "",
+  country: "US",
+  date_opened: "",
+  sort_order: 0,
+  timezone: "America/Los_Angeles",
+  status: "active",
+});
 
 export default function AdminStoresPage() {
-  const { role } = useAuth();
+  const [stores, setStores] = useState<StoreRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [stores, setStores] = useState<StoreRow[]>([]);
-  const [managers, setManagers] = useState<UserOption[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [form, setForm] = useState<StoreRow>(empty());
 
-  const emptyStore: StoreRow = useMemo(
-    () => ({
-      id: "",
-      ace_store_number: "",
-      pos_store_number: "",
-      store_name: "",
-      store_email: "",
-      address_line1: "",
-      address_line2: "",
-      city: "",
-      state: "NV",
-      postal_code: "",
-      country: "US",
-      date_opened: null,
-      timezone: "America/Los_Angeles",
-      sort_order: null,
-      primary_manager_user_id: null,
-      status: "active",
-    }),
-    []
-  );
-
-  const [form, setForm] = useState<StoreRow>(emptyStore);
+  // Enable temporary debug diagnostics by setting VITE_DEBUG_ADMIN=true in your .env
+  const DEBUG = import.meta.env.VITE_DEBUG_ADMIN === "true";
 
   const load = async () => {
+    setLoading(true);
+    setErr(null);
     try {
-      setErr(null);
-      setLoading(true);
+      const userId = auth.user?.id ?? null;
+      const role = auth.profile?.role ?? null;
+      console.log(`AdminStoresPage: fetching stores as user=${userId} role=${role}`);
 
-      const [{ data: storeData, error: storeErr }, { data: mgrData, error: mgrErr }] = await Promise.all([
-        supabase.from("stores").select("*").order("sort_order", { ascending: true }).order("store_name", { ascending: true }),
-        supabase
-          .from("user_profiles")
-          .select("id, full_name, email, role")
-          .in("role", ["manager", "admin"])
-          .eq("status", "active")
-          .order("full_name", { ascending: true }),
-      ]);
+      const { data, error } = await supabase
+        .from("stores")
+        .select(
+          "id, ace_store_number, pos_store_number, store_name, email, address_line1, address_line2, city, state, postal_code, country, date_opened, sort_order, timezone, status"
+        )
+        .order("sort_order", { ascending: true })
+        .order("store_name", { ascending: true });
 
-      if (storeErr) throw storeErr;
-      if (mgrErr) throw mgrErr;
-
-      setStores((storeData as StoreRow[]) ?? []);
-      setManagers((mgrData as UserOption[]) ?? []);
-
-      // keep selection stable
-      if (selectedId) {
-        const match = (storeData as StoreRow[])?.find((s) => s.id === selectedId);
-        if (match) setForm(match);
+      if (error) throw error;
+      // Normalize server responses: some environments may return legacy column `store_email`.
+      const normalized = (data ?? []).map((r: Partial<StoreRow> & { store_email?: string }) => ({
+        ...r,
+        email: r.email ?? r.store_email ?? null,
+      })) as StoreRow[];
+      const hadLegacy = (data ?? []).some((r: Partial<StoreRow> & { store_email?: string }) => r.store_email !== undefined);
+      if (hadLegacy) console.warn("AdminStoresPage: normalized legacy column `store_email` to `email`");
+      setStores(normalized);
+      console.log("AdminStoresPage: fetched stores:", normalized.length);
+    } catch (e: unknown) {
+      const message = formatError(e) || "Failed to load stores.";
+      console.error("AdminStoresPage load error:", e);
+      // If the error mentions a non-existent column like store_email, provide a clearer message
+      if (String(message).includes("store_email")) {
+        setErr("Server query references non-existent column `store_email`. Expected column is `email`. Please update server-side query or report to the backend team.");
+      } else {
+        setErr(message);
       }
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to load stores.");
     } finally {
       setLoading(false);
     }
   };
 
+  const auth = useAuth();
+
   useEffect(() => {
-    if (role !== "admin") return;
-    load();
+    // Wait for auth/session and profile readiness before fetching protected data
+    if (!auth.authReady || !auth.profileReady) return;
+
+    if (!auth.user) {
+      setErr("Not signed in.");
+      setLoading(false);
+      return;
+    }
+
+    if (!auth.profile || auth.profile.role !== "Admin") {
+      setErr("Not authorized.");
+      setLoading(false);
+      return;
+    }
+
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role]);
+  }, [auth.authReady, auth.profileReady, auth.user, auth.profile?.role]);
 
-  if (role !== "admin") return <div>Not authorized.</div>;
-
-  const pick = (id: string) => {
-    setSelectedId(id);
-    const s = stores.find((x) => x.id === id);
-    if (s) setForm(s);
-  };
-
-  const newStore = () => {
-    setSelectedId(null);
-    setForm({ ...emptyStore });
-  };
+  const pick = (s: StoreRow) => setForm({ ...s });
+  const clear = () => setForm(empty());
 
   const save = async () => {
+    setErr(null);
+
+    if (!auth.user) {
+      setErr("Not signed in. Please sign in and try again.");
+      return;
+    }
+
+    const payload = {
+      ace_store_number: form.ace_store_number.trim(),
+      pos_store_number: form.pos_store_number.trim(),
+      store_name: form.store_name.trim(),
+      email: form.email?.trim() || null,
+      address_line1: form.address_line1?.trim() || null,
+      address_line2: form.address_line2?.trim() || null,
+      city: form.city?.trim() || null,
+      state: form.state?.trim() || null,
+      postal_code: form.postal_code?.trim() || null,
+      country: form.country?.trim() || null,
+      date_opened: form.date_opened || null,
+      sort_order: Number.isFinite(Number(form.sort_order)) ? Number(form.sort_order) : null,
+      timezone: form.timezone?.trim() || null,
+      status: form.status,
+    };
+
+    if (!payload.ace_store_number) return setErr("ACE Store # is required.");
+    if (!payload.pos_store_number) return setErr("POS Store # is required.");
+    if (!payload.store_name) return setErr("Store Name is required.");
+
+    console.log(`AdminStoresPage: saving store id=${form.id || '<new>'} status=${payload.status}`);
+
+    type SupabaseRes = { data?: Array<Partial<StoreRow>> | null; error?: unknown };
+
     try {
-      setErr(null);
+      // If form.id is falsy -> create new store (omit id so DB can generate it)
+      if (!form.id) {
+        // Insert: only request returned rows when DEBUG is enabled so we don't change default behavior
+        const insertQuery = supabase.from("stores").insert(payload);
+        const insertRes = DEBUG ? await insertQuery.select() : await insertQuery;
+        const { data: insertData, error: insertErr } = insertRes as unknown as SupabaseRes;
+        if (DEBUG) {
+          console.groupCollapsed("AdminStoresPage: save response (insert)");
+          console.log("payload", { id: form.id ?? null, status: payload.status });
+          console.log("response", insertRes);
+          if (insertData && insertData.length) console.log("inserted status", insertData[0].status);
+          console.groupEnd();
+        }
+        if (insertErr) throw insertErr;
+        // ensure we refresh the list with the newly created store included
+        await load();
+        // If desired, pick the newly created item into the form (keep simple: clear form)
+        clear();
+        console.log("AdminStoresPage: save complete ok=true");
+        return;
+      }
 
-      const payload = { ...form } as any;
-      if (!payload.pos_store_number) payload.pos_store_number = null;
-      if (!payload.store_email) payload.store_email = null;
-      if (!payload.address_line1) payload.address_line1 = null;
-      if (!payload.address_line2) payload.address_line2 = null;
-      if (!payload.city) payload.city = null;
-      if (!payload.state) payload.state = null;
-      if (!payload.postal_code) payload.postal_code = null;
-      if (!payload.country) payload.country = null;
-      if (!payload.timezone) payload.timezone = null;
-      if (!payload.primary_manager_user_id) payload.primary_manager_user_id = null;
-      if (!payload.sort_order) payload.sort_order = null;
-
-      // Upsert: if id empty -> let DB generate id if configured; otherwise will insert with provided id.
-      // Many schemas use uuid default. If your table requires id provided, we can adjust later.
-      if (!payload.id) delete payload.id;
-
-      const { error } = await supabase.from("stores").upsert(payload, { onConflict: "ace_store_number" });
-      if (error) throw error;
+      // Existing store -> update via upsert (id present)
+      const upsertQuery = supabase.from("stores").upsert({ ...payload, id: form.id }, { onConflict: "id" });
+      const upsertRes = DEBUG ? await upsertQuery.select() : await upsertQuery;
+      const { data: upsertData, error: upsertErr } = upsertRes as unknown as SupabaseRes;
+      if (DEBUG) {
+        console.groupCollapsed("AdminStoresPage: save response (upsert)");
+        console.log("payload", { id: form.id, status: payload.status });
+        console.log("response", upsertRes);
+        if (upsertData && upsertData.length) console.log("upserted status", upsertData[0].status);
+        console.groupEnd();
+      }
+      if (upsertErr) throw upsertErr;
 
       await load();
-      // reselect based on ace_store_number if it was a new insert
-      const matchAce = stores.find((s) => s.ace_store_number === form.ace_store_number);
-      if (matchAce) setSelectedId(matchAce.id);
-    } catch (e: any) {
-      setErr(e?.message ?? "Save failed.");
+      clear();
+      console.log("AdminStoresPage: save complete ok=true");
+    } catch (e: unknown) {
+      const message = formatError(e) || "Save failed.";
+      console.error("AdminStoresPage save error:", e);
+      setErr(message);
+      console.log("AdminStoresPage: save complete ok=false");
     }
   };
 
+  const list = useMemo(() => stores, [stores]);
+
+  if (loading) return <div>Loading…</div>;
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 16, alignItems: "start" }}>
-      <div style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ fontWeight: 800 }}>Stores</div>
-          <button onClick={newStore} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>
-            + New
-          </button>
+    <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 18 }}>
+      <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ margin: 0 }}>Stores</h2>
+          <button onClick={clear}>+ New</button>
         </div>
 
-        {loading ? <div>Loading…</div> : null}
-        {err ? <div style={{ color: "crimson", marginBottom: 10 }}>{err}</div> : null}
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {stores.map((s) => (
-            <button
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+          {list.map((s) => (
+            <div
               key={s.id}
-              onClick={() => pick(s.id)}
+              onClick={() => pick(s)}
               style={{
-                textAlign: "left",
                 border: "1px solid #eee",
-                background: selectedId === s.id ? "rgba(0,0,0,0.04)" : "#fff",
-                borderRadius: 12,
-                padding: 10,
+                borderRadius: 10,
+                padding: 12,
                 cursor: "pointer",
               }}
             >
-              <div style={{ fontWeight: 800 }}>{s.store_name}</div>
-              <div style={{ color: "#666", fontSize: 12 }}>
-                ACE {s.ace_store_number} • POS {s.pos_store_number ?? "—"} • {s.status}
+              <div style={{ fontWeight: 800 }}>{s.store_name}{s.status !== "active" ? " (inactive)" : ""}</div>
+              <div style={{ color: "#555", fontSize: 13 }}>
+                ACE {s.ace_store_number} • POS {s.pos_store_number} • {s.status}
               </div>
-            </button>
+            </div>
           ))}
+          {list.length === 0 ? <div style={{ color: "#666" }}>No stores found.</div> : null}
         </div>
       </div>
 
-      <div style={{ border: "1px solid #eee", borderRadius: 14, padding: 12 }}>
-        <div style={{ fontWeight: 800, marginBottom: 10 }}>{selectedId ? "Edit Store" : "Create Store"}</div>
+      <div style={{ border: "1px solid #e5e5e5", borderRadius: 10, padding: 14 }}>
+        <h2 style={{ marginTop: 0 }}>{form.id ? "Edit Store" : "Create Store"}</h2>
 
         {err ? <div style={{ color: "crimson", marginBottom: 10 }}>{err}</div> : null}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, maxWidth: 980 }}>
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>ACE Store #</div>
-            <input value={form.ace_store_number} onChange={(e) => setForm({ ...form, ace_store_number: e.target.value })} style={{ width: "100%", padding: 8 }} />
-          </label>
-
-          <label>
-            <div style={{ fontSize: 12, color: "#666" }}>POS Store #</div>
-            <input value={form.pos_store_number ?? ""} onChange={(e) => setForm({ ...form, pos_store_number: e.target.value })} style={{ width: "100%", padding: 8 }} />
-          </label>
-
-          <label style={{ gridColumn: "span 2" }}>
-            <div style={{ fontSize: 12, color: "#666" }}>Store Name</div>
-            <input value={form.store_name} onChange={(e) => setForm({ ...form, store_name: e.target.value })} style={{ width: "100%", padding: 8 }} />
-          </label>
-
-          <label style={{ gridColumn: "span 2" }}>
-            <div style={{ fontSize: 12, color: "#666" }}>Store Email</div>
-            <input value={form.store_email ?? ""} onChange={(e) => setForm({ ...form, store_email: e.target.value })} style={{ width: "100%", padding: 8 }} />
-          </label>
-
-          <label style={{ gridColumn: "span 2" }}>
-            <div style={{ fontSize: 12, color: "#666" }}>Address Line 1</div>
-            <input value={form.address_line1 ?? ""} onChange={(e) => setForm({ ...form, address_line1: e.target.value })} style={{ width: "100%", padding: 8 }} />
-          </label>
-
-          <label style={{ gridColumn: "span 2" }}>
-            <div style={{ fontSize: 12, color: "#666" }}>Address Line 2</div>
-            <input value={form.address_line2 ?? ""} onChange={(e) => setForm({ ...form, address_line2: e.target.value })} style={{ width: "100%", padding: 8 }} />
+            <div>ACE Store #</div>
+            <input
+              value={form.ace_store_number}
+              onChange={(e) => setForm((p) => ({ ...p, ace_store_number: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>City</div>
-            <input value={form.city ?? ""} onChange={(e) => setForm({ ...form, city: e.target.value })} style={{ width: "100%", padding: 8 }} />
+            <div>POS Store #</div>
+            <input
+              value={form.pos_store_number}
+              onChange={(e) => setForm((p) => ({ ...p, pos_store_number: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>State</div>
-            <input value={form.state ?? ""} onChange={(e) => setForm({ ...form, state: e.target.value })} style={{ width: "100%", padding: 8 }} />
+            <div>Store Name</div>
+            <input
+              value={form.store_name}
+              onChange={(e) => setForm((p) => ({ ...p, store_name: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>Postal Code</div>
-            <input value={form.postal_code ?? ""} onChange={(e) => setForm({ ...form, postal_code: e.target.value })} style={{ width: "100%", padding: 8 }} />
+            <div>Store Email</div>
+            <input
+              value={form.email ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>Country</div>
-            <input value={form.country ?? ""} onChange={(e) => setForm({ ...form, country: e.target.value })} style={{ width: "100%", padding: 8 }} />
+            <div>Address Line 1</div>
+            <input
+              value={form.address_line1 ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, address_line1: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>Date Opened</div>
+            <div>Address Line 2</div>
+            <input
+              value={form.address_line2 ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, address_line2: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
+          </label>
+
+          <label>
+            <div>City</div>
+            <input
+              value={form.city ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, city: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
+          </label>
+
+          <label>
+            <div>State</div>
+            <input
+              value={form.state ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, state: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
+          </label>
+
+          <label>
+            <div>Postal Code</div>
+            <input
+              value={form.postal_code ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, postal_code: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
+          </label>
+
+          <label>
+            <div>Country</div>
+            <input
+              value={form.country ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, country: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
+          </label>
+
+          <label>
+            <div>Date Opened</div>
             <input
               type="date"
               value={form.date_opened ?? ""}
-              onChange={(e) => setForm({ ...form, date_opened: e.target.value || null })}
+              onChange={(e) => setForm((p) => ({ ...p, date_opened: e.target.value }))}
               style={{ width: "100%", padding: 8 }}
             />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>Sort Order</div>
+            <div>Sort Order</div>
             <input
-              type="number"
-              value={form.sort_order ?? ""}
-              onChange={(e) => setForm({ ...form, sort_order: e.target.value ? Number(e.target.value) : null })}
+              value={String(form.sort_order ?? 0)}
+              onChange={(e) => setForm((p) => ({ ...p, sort_order: Number(e.target.value) }))}
               style={{ width: "100%", padding: 8 }}
             />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>Timezone</div>
-            <input value={form.timezone ?? ""} onChange={(e) => setForm({ ...form, timezone: e.target.value })} style={{ width: "100%", padding: 8 }} />
+            <div>Timezone</div>
+            <input
+              value={form.timezone ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, timezone: e.target.value }))}
+              style={{ width: "100%", padding: 8 }}
+            />
           </label>
 
           <label>
-            <div style={{ fontSize: 12, color: "#666" }}>Status</div>
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as StoreStatus })} style={{ width: "100%", padding: 8 }}>
+            <div>Status</div>
+            <select
+              value={form.status}
+              onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as StoreRow['status'] }))}
+              style={{ width: "100%", padding: 8 }}
+            >
               <option value="active">active</option>
               <option value="inactive">inactive</option>
             </select>
           </label>
-
-          <label style={{ gridColumn: "span 2" }}>
-            <div style={{ fontSize: 12, color: "#666" }}>Primary Store Manager</div>
-            <select
-              value={form.primary_manager_user_id ?? ""}
-              onChange={(e) => setForm({ ...form, primary_manager_user_id: e.target.value || null })}
-              style={{ width: "100%", padding: 8 }}
-            >
-              <option value="">— None —</option>
-              {managers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name ?? u.email ?? u.id}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-          <button onClick={save} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "8px 12px", cursor: "pointer", fontWeight: 700 }}>
-            Save
-          </button>
-          <button onClick={newStore} style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "8px 12px", cursor: "pointer" }}>
-            Clear / New
-          </button>
+        <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+          <button onClick={() => void save()}>Save</button>
+          <button onClick={clear}>Clear / New</button>
         </div>
       </div>
     </div>

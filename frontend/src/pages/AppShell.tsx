@@ -1,48 +1,56 @@
-// frontend/src/pages/AppShell.tsx
-import React from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { type ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 
-export default function AppShell() {
-  const { user, session, signOut } = useAuth();
-  const location = useLocation();
+function NavLink({ to, label }: { to: string; label: string }) {
+  const loc = useLocation();
+  const active = loc.pathname === to || (to !== "/" && loc.pathname.startsWith(to));
+  return (
+    <Link
+      to={to}
+      style={{
+        marginRight: 14,
+        textDecoration: "none",
+        color: active ? "#111" : "#1a0dab",
+        fontWeight: active ? 700 : 400,
+      }}
+    >
+      {label}
+    </Link>
+  );
+}
 
-  const showTopNav = !location.pathname.startsWith("/login") && !location.pathname.startsWith("/reset-password");
+export default function AppShell({ children }: { children: ReactNode }) {
+  const { user, signOut } = useAuth();
 
   return (
-    <div className="app">
-      {showTopNav && (
-        <header className="topbar">
-          <div className="topbar__left">
-            <div className="brand">Skye Hub</div>
-            <nav className="nav">
-              <Link className="nav__link" to="/home">
-                Home
-              </Link>
-              <Link className="nav__link" to="/admin">
-                Admin
-              </Link>
-            </nav>
-          </div>
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "14px 18px",
+          borderBottom: "1px solid #e5e5e5",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <div style={{ fontWeight: 800, marginRight: 18 }}>Skye Hub</div>
+          <NavLink to="/" label="Home" />
+          <NavLink to="/admin" label="Admin" />
+        </div>
 
-          <div className="topbar__right">
-            {session && (
-              <>
-                <div className="whoami">
-                  {user?.user_metadata?.full_name || user?.email || "Signed in"}
-                </div>
-                <button className="btn" onClick={signOut}>
-                  Sign out
-                </button>
-              </>
-            )}
-          </div>
-        </header>
-      )}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {user ? (
+            <>
+              <div style={{ color: "#555" }}>{user.email ?? "Signed in"}</div>
+              <button onClick={() => void signOut()}>Sign out</button>
+            </>
+          ) : null}
+        </div>
+      </div>
 
-      <main className="content">
-        <Outlet />
-      </main>
+      <div style={{ padding: 18 }}>{children}</div>
     </div>
   );
 }

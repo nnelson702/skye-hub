@@ -1,56 +1,81 @@
-// frontend/src/pages/LoginPage.tsx
-import React, { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
+import { useAuth } from "../auth/AuthProvider";
 
 export default function LoginPage() {
   const nav = useNavigate();
-  const loc = useLocation() as any;
-  const to = loc?.state?.from ?? "/";
+  type LocationState = { from?: string };
+  const loc = useLocation() as { state?: LocationState };
+  const { user } = useAuth();
+
+  const from = useMemo(() => loc?.state?.from ?? "/", [loc]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [err, setErr] = useState<string | null>(null);
+
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (user) {
+    // Already signed in
+    nav(from, { replace: true });
+  }
 
   const signIn = async () => {
+    setBusy(true);
+    setErr(null);
     try {
-      setErr(null);
-      setBusy(true);
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
       if (error) throw error;
-      nav(to, { replace: true });
-    } catch (e: any) {
-      setErr(e?.message ?? "Login failed.");
+      nav(from, { replace: true });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setErr(message || "Sign-in failed.");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div style={{ maxWidth: 420 }}>
-      <h1 style={{ margin: "8px 0 6px" }}>Login</h1>
-      <div style={{ color: "#555", marginBottom: 12 }}>Sign in with your company email.</div>
+    <div style={{ maxWidth: 520 }}>
+      <h1 style={{ marginTop: 0 }}>Login</h1>
 
-      {err ? <div style={{ color: "crimson", marginBottom: 10 }}>{err}</div> : null}
+      {err ? <div style={{ color: "crimson", marginBottom: 12 }}>{err}</div> : null}
 
-      <label>
-        <div style={{ fontSize: 12, color: "#666" }}>Email</div>
-        <input value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: "100%", padding: 10, marginBottom: 10 }} />
-      </label>
+      <div style={{ display: "grid", gap: 10 }}>
+        <label>
+          <div>Email</div>
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+            style={{ width: "100%", padding: 8 }}
+          />
+        </label>
 
-      <label>
-        <div style={{ fontSize: 12, color: "#666" }}>Password</div>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", padding: 10, marginBottom: 12 }} />
-      </label>
+        <label>
+          <div>Password</div>
+          <input
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            type="password"
+            autoComplete="current-password"
+            style={{ width: "100%", padding: 8 }}
+          />
+        </label>
 
-      <button
-        onClick={signIn}
-        disabled={busy}
-        style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 10, padding: "10px 14px", cursor: "pointer", fontWeight: 800 }}
-      >
-        {busy ? "Signing in…" : "Sign in"}
-      </button>
+        <button disabled={busy} onClick={() => void signIn()} style={{ padding: "10px 12px" }}>
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+
+        <div style={{ marginTop: 6 }}>
+          <Link to="/reset-password">Forgot password?</Link>
+        </div>
+      </div>
     </div>
   );
 }

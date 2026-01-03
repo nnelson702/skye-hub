@@ -1,15 +1,14 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
+import type { ReactNode } from "react";
 
-export function RequirePasswordReset({ children }: { children: JSX.Element }) {
-  const { profile, loading } = useAuth();
+export default function RequirePasswordReset({ children }: { children: ReactNode }) {
+  // Placeholder guard for later. We are NOT using user_profiles.force_password_reset (column does not exist).
+  // Keeping this file so the app structure doesn't drift.
+  const { booting, user } = useAuth();
 
-  if (loading) return <div style={{ padding: 24 }}>Loading…</div>;
-  if (!profile) return <Navigate to="/login" replace />;
+  if (booting) return <div style={{ padding: 24 }}>Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
 
-  if (profile.must_reset_password) {
-    return <Navigate to="/reset-password" replace />;
-  }
-
-  return children;
+  return <>{children}</>;
 }
