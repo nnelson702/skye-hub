@@ -1,10 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Read env vars from Deno (preferred) with HUB_ prefixes, fallback to old names
+const getEnv = (k: string) => (typeof Deno !== "undefined" && typeof Deno.env?.get === "function" ? Deno.env.get(k) : process.env?.[k]);
+
+const SUPABASE_URL = getEnv("HUB_SUPABASE_URL") ?? getEnv("SUPABASE_URL") ?? getEnv("URL");
+const SUPABASE_SERVICE_ROLE_KEY = getEnv("HUB_SUPABASE_SERVICE_ROLE_KEY") ?? getEnv("SUPABASE_SERVICE_ROLE_KEY") ?? getEnv("SERVICE_ROLE_KEY");
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.warn("admin_create_user: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
+  console.error("admin_create_user: missing required env vars");
 }
 
 const adminClient = createClient(SUPABASE_URL || "", SUPABASE_SERVICE_ROLE_KEY || "");
@@ -41,9 +44,21 @@ export default async function (req: Request): Promise<Response> {
     if (!callerRole || callerRole !== "Admin") return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
 
     const body = await req.json();
-    const { email, full_name, role, status, home_store_id, invite = true, tempPassword: providedTempPassword, redirectTo } = body;
+    const { email, full_name, role, status, home_store_id, invite = true, tempPassword: providedTempPassword, redirectTo: reqRedirect } = body;
 
     if (!email || !full_name) return new Response(JSON.stringify({ error: "missing_fields" }), { status: 400 });
+
+    // Validate required env vars and fail-fast with helpful message listing what we checked
+    const checkedEnv = {
+      SUPABASE_URL: ["HUB_SUPABASE_URL", "SUPABASE_URL", "URL"],
+      SERVICE_ROLE_KEY: ["HUB_SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SERVICE_ROLE_KEY"],
+    };
+    const missing: Record<string, string[]> = {};
+    if (!SUPABASE_URL) missing.SUPABASE_URL = checkedEnv.SUPABASE_URL;
+    if (!SUPABASE_SERVICE_ROLE_KEY) missing.SERVICE_ROLE_KEY = checkedEnv.SERVICE_ROLE_KEY;
+    if (Object.keys(missing).length) {
+      return new Response(JSON.stringify({ error: "missing_env", details: missing }), { status: 500 });
+    }
 
     // Prepare temp password (if needed)
     const tempPassword = providedTempPassword || genTempPassword();
@@ -88,8 +103,9 @@ export default async function (req: Request): Promise<Response> {
 
     // Attempt to generate a password reset link and consider it as invite email if possible
     try {
+      const redirectTo = reqRedirect ?? getEnv("HUB_REDIRECT_URL") ?? (getEnv("HUB_SITE_URL") ? `${getEnv("HUB_SITE_URL")}/reset-password` : undefined);
       // @ts-expect-error: generateLink may exist on admin.auth
-      const linkResRaw = await adminClient.auth.admin.generateLink?.("reset", email, { redirectTo: redirectTo || process.env.SITE_URL || undefined });
+      const linkResRaw = await adminClient.auth.admin.generateLink?.("reset", email, { redirectTo });
       type LinkRes = { data?: { action_link?: string } | null } | null | undefined;
       const linkRes = linkResRaw as unknown as LinkRes;
       if (linkRes && linkRes.data && linkRes.data.action_link) {

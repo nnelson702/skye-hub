@@ -45,6 +45,9 @@ export default function AdminUsersPage() {
   // Invite flow controls
   const [inviteByEmail, setInviteByEmail] = useState<boolean>(true);
   const [tempPassword, setTempPassword] = useState<string>("");
+  // store invite artifacts
+  const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
+  const [lastTempPassword, setLastTempPassword] = useState<string | null>(null);
 
   const auth = useAuth();
 
@@ -237,10 +240,18 @@ export default function AdminUsersPage() {
         const created = (users ?? []).find((u) => u.id === newUserId);
         if (created) pickUser(created);
 
-        // Show an appropriate notice
-        if (json?.inviteSent || json?.resetLink) setNotice(`Invite sent to ${email}.`);
-        else if (json?.tempPassword) setNotice(`User created. Temp password: ${json.tempPassword}`);
-        else setNotice("User created.");
+        // Show an appropriate notice and expose invite/reset/temp info
+        if (json?.inviteSent || json?.resetLink) {
+          setNotice(`Invite sent to ${email}.`);
+        } else if (json?.tempPassword) {
+          setNotice(`User created. Temp password available.`);
+        } else {
+          setNotice("User created.");
+        }
+
+        // store returned details for admin UI (reset link, temp password)
+        setLastInviteLink(json?.resetLink ?? null);
+        setLastTempPassword(json?.tempPassword ?? null);
 
         // Apply any selected assignments (selectedStoreIds may have been set prior)
         if (selectedStoreIds && selectedStoreIds.length) {
@@ -391,6 +402,21 @@ export default function AdminUsersPage() {
 
         {err ? <div style={{ color: "crimson", marginBottom: 10 }}>{err}</div> : null}
         {notice ? <div style={{ color: "green", marginBottom: 10 }}>{notice}</div> : null}
+        {lastInviteLink ? (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontWeight: 700 }}>Invite Link</div>
+            <a href={lastInviteLink} target="_blank" rel="noreferrer">
+              {lastInviteLink}
+            </a>
+          </div>
+        ) : null}
+        {lastTempPassword ? (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontWeight: 700 }}>Temporary Password</div>
+            <div style={{ background: "#f7f7f7", padding: 8 }}>{lastTempPassword}</div>
+            <div style={{ fontSize: 12, color: "#666" }}>User must reset their password on first login.</div>
+          </div>
+        ) : null}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, maxWidth: 820 }}>
           <label>
