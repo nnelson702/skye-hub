@@ -1,14 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { useAuth } from "../contexts/AuthContext";
-
-type StoreRow = {
-  id: number;
-  ace_store_number: string;
-  store_name: string;
-  status: string;
-};
 
 type UserProfileRow = {
   id: string;
@@ -16,376 +7,263 @@ type UserProfileRow = {
   email: string | null;
   role: string | null;
   status: string | null;
-  home_store_id: number | null;
-  must_reset_password: boolean | null;
+  home_store_id: string | null;
+  must_reset_password?: boolean | null;
 };
 
-type StoreAccessRow = {
-  user_id: string;
-  store_id: number;
+type StoreRow = {
+  id: string;
+  ace_store_number: string;
+  store_name: string;
+  status?: string | null;
 };
+
+function formatError(err: any) {
+  if (!err) return "";
+  if (typeof err === "string") return err;
+  if (err?.message) return err.message;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
 
 export default function AdminUsersPage() {
-  const { auth } = useAuth();
-
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string>("");
 
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [users, setUsers] = useState<UserProfileRow[]>([]);
-  const [access, setAccess] = useState<StoreAccessRow[]>([]);
 
-  const [filterText, setFilterText] = useState("");
-  const [statusFilter, setStatusFilter] = useState("Active");
+  const [filter, setFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all">("active");
 
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-
-  // form state
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("Employee");
-  const [userStatus, setUserStatus] = useState("active");
-  const [homeStoreId, setHomeStoreId] = useState<number | null>(null);
+  const [status, setStatus] = useState("active");
+  const [homeStoreId, setHomeStoreId] = useState<string | null>(null);
 
-  const [forceReset, setForceReset] = useState(true);
-  const [sendInvite, setSendInvite] = useState(false);
+  const [forcePasswordReset, setForcePasswordReset] = useState(true);
+  const [sendInviteEmail, setSendInviteEmail] = useState(true);
   const [tempPassword, setTempPassword] = useState("");
 
-  const [storeAccessIds, setStoreAccessIds] = useState<number[]>([]);
-
-  const [err, setErr] = useState<string | null>(null);
-  const [justCreatedUserId, setJustCreatedUserId] = useState<string | null>(null);
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
   const filteredUsers = useMemo(() => {
-    const ft = filterText.trim().toLowerCase();
-    const statusWant = statusFilter.toLowerCase();
+    const f = filter.trim().toLowerCase();
+    return users.filter((u) => {
+      const matchesText =
+        !f ||
+        (u.full_name ?? "").toLowerCase().includes(f) ||
+        (u.email ?? "").toLowerCase().includes(f);
 
-    return users
-      .filter((u) => {
-        const s = (u.status ?? "").toLowerCase();
-        if (statusWant === "active" && s !== "active") return false;
-        if (statusWant === "inactive" && s === "active") return false;
-        return true;
-      })
-      .filter((u) => {
-        if (!ft) return true;
-        const n = (u.full_name ?? "").toLowerCase();
-        const e = (u.email ?? "").toLowerCase();
-        return n.includes(ft) || e.includes(ft);
-      });
-  }, [users, filterText, statusFilter]);
+      const matchesStatus =
+        statusFilter === "all" ? true : (u.status ?? "").toLowerCase() === statusFilter;
 
-  async function fetchAll() {
+      return matchesText && matchesStatus;
+    });
+  }, [users, filter, statusFilter]);
+
+  async function refreshUsersAndStores() {
+    setErr("");
     setLoading(true);
-    setErr(null);
-    setJustCreatedUserId(null);
-
     try {
-      const userId = auth?.user?.id;
-      const userRole = auth?.profile?.role;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id;
+
+      // Stores
+      const { data: storesData, error: storesErr } = await supabase
+        .from("stores")
+        .select("id, ace_store_number, store_name, status")
+        .order("store_name", { ascending: true });
+
+      if (storesErr) throw storesErr;
+      setStores((storesData ?? []) as StoreRow[]);
+
+      // Users
+      const { data: usersData, error: usersErr } = await supabase
+        .from("user_profiles")
+        .select("id, full_name, email, role, status, home_store_id, must_reset_password")
+        .order("full_name", { ascending: true });
+
+      if (usersErr) throw usersErr;
 
       console.log(
-        `AdminUsersPage: fetching stores+users as user=${userId} role=${userRole}`,
+        `AdminUsersPage: fetched stores=${(storesData ?? []).length} users=${(usersData ?? []).length} as user=${uid}`
       );
 
-      const [storesRes, usersRes, accessRes] = await Promise.all([
-        supabase
-          .from("stores")
-          .select("id,ace_store_number,store_name,status")
-          .order("store_name", { ascending: true }),
-        supabase
-          .from("user_profiles")
-          .select(
-            "id,full_name,email,role,status,home_store_id,must_reset_password",
-          )
-          .order("full_name", { ascending: true }),
-        supabase.from("user_store_access").select("user_id,store_id"),
-      ]);
-
-      if (storesRes.error) throw storesRes.error;
-      if (usersRes.error) throw usersRes.error;
-      if (accessRes.error) throw accessRes.error;
-
-      setStores((storesRes.data ?? []) as StoreRow[]);
-      setUsers((usersRes.data ?? []) as UserProfileRow[]);
-      setAccess((accessRes.data ?? []) as StoreAccessRow[]);
-
-      console.log(
-        `AdminUsersPage: fetched stores: ${(storesRes.data ?? []).length} users: ${(usersRes.data ?? []).length}`,
-      );
-
-      // default home store
-      if (!homeStoreId && (storesRes.data ?? []).length > 0) {
-        setHomeStoreId((storesRes.data ?? [])[0].id);
-      }
+      setUsers((usersData ?? []) as UserProfileRow[]);
     } catch (e: any) {
-      console.error("AdminUsersPage fetchAll error:", e);
-      setErr(e?.message || "Failed to load admin users data.");
+      console.error("AdminUsersPage refresh error:", e);
+      setErr(formatError(e));
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    fetchAll();
+    refreshUsersAndStores();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function clearForm() {
-    setSelectedUserId(null);
-    setFullName("");
-    setEmail("");
-    setRole("Employee");
-    setUserStatus("active");
-    setHomeStoreId(stores[0]?.id ?? null);
-    setForceReset(true);
-    setSendInvite(false);
-    setTempPassword("");
-    setStoreAccessIds([]);
-    setErr(null);
-    setJustCreatedUserId(null);
-  }
-
-  function selectUser(u: UserProfileRow) {
-    setSelectedUserId(u.id);
-    setFullName(u.full_name ?? "");
-    setEmail(u.email ?? "");
-    setRole(u.role ?? "Employee");
-    setUserStatus(u.status ?? "active");
-    setHomeStoreId(u.home_store_id ?? null);
-    setForceReset(!!u.must_reset_password);
-    setSendInvite(false);
-    setTempPassword("");
-    setStoreAccessIds(
-      access.filter((a) => a.user_id === u.id).map((a) => a.store_id),
-    );
-    setErr(null);
-    setJustCreatedUserId(null);
-  }
-
-  function toggleStoreAccess(storeId: number) {
-    setStoreAccessIds((prev) =>
-      prev.includes(storeId) ? prev.filter((x) => x !== storeId) : [...prev, storeId],
-    );
-  }
-
   function generatePassword() {
-    const chars =
-      "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     let out = "";
-    for (let i = 0; i < 10; i++) out += chars[Math.floor(Math.random() * chars.length)];
+    for (let i = 0; i < 12; i++) out += chars[Math.floor(Math.random() * chars.length)];
     out += "!A1";
     setTempPassword(out);
   }
 
-  async function saveUser() {
-    setSaving(true);
-    setErr(null);
-    setJustCreatedUserId(null);
+  async function onCreateUser() {
+    setErr("");
+    setLoading(true);
 
     try {
-      if (!fullName.trim() || !email.trim()) {
-        setErr("Full name and email are required.");
-        setSaving(false);
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) throw sessionErr;
+
+      const token = sessionData?.session?.access_token;
+      if (!token) {
+        setErr("No session token found. You must be signed in.");
+        return;
+      }
+      if (!anonKey) {
+        setErr("Missing VITE_SUPABASE_ANON_KEY in your Vercel env vars.");
         return;
       }
 
-      // NOTE: This path creates NEW Auth user + profile via Edge Function.
-      // If selectedUserId exists, we only update profile + store access (no new auth user).
-      if (!selectedUserId) {
-        // Create via Edge Function
-        const payload = {
-          email: email.trim(),
-          full_name: fullName.trim(),
-          role,
-          status: userStatus,
-          home_store_id: homeStoreId,
-          invite: !!sendInvite,
-          tempPassword: tempPassword ? tempPassword : undefined,
-          // Optional: pass redirectTo if you want invite link destination
-          // redirectTo: `${window.location.origin}/reset-password`,
-        };
+      const payload = {
+        email: email.trim(),
+        full_name: fullName.trim(),
+        role,
+        status,
+        home_store_id: homeStoreId,
+        invite: !!sendInviteEmail,
+        tempPassword: tempPassword ? tempPassword : undefined,
+        // your checkbox name in UI is “Force password reset”; keep intent:
+        // if not inviting, we still want them forced to reset via temp password workflow
+        forcePasswordReset: !!forcePasswordReset,
+      };
 
-        console.log("AdminUsersPage: calling admin_create_user via invoke()", payload);
+      console.log("AdminUsersPage: calling admin_create_user payload=", payload);
 
-        const { data: json, error: fnErr } = await supabase.functions.invoke(
-          "admin_create_user",
-          { body: payload },
-        );
-
-        if (fnErr) {
-          console.log("AdminUsersPage: admin_create_user done ok=false", fnErr);
-          setErr((fnErr as any)?.message || "admin_create_user failed.");
-          setSaving(false);
-          return;
+      const resp = await fetch(
+        "https://olbyttpwpovkvudtdoyc.supabase.co/functions/v1/admin_create_user",
+        {
+          method: "POST",
+          headers: {
+            // ✅ THIS is the big missing piece
+            apikey: anonKey,
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
         }
+      );
 
-        const newUserId = (json as any)?.id;
-        if (!newUserId) throw new Error("No id returned from admin_create_user");
+      const text = await resp.text();
+      let json: any = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = { raw: text };
+      }
 
-        console.log("AdminUsersPage: created userId", newUserId);
+      console.log(`AdminUsersPage: admin_create_user status=${resp.status}`, json);
 
-        // Store access rows
-        if (storeAccessIds.length > 0) {
-          const accessRows = storeAccessIds.map((sid) => ({
-            user_id: newUserId,
-            store_id: sid,
-          }));
-
-          const { error: accessErr } = await supabase
-            .from("user_store_access")
-            .insert(accessRows);
-
-          if (accessErr) throw accessErr;
+      if (!resp.ok) {
+        if (resp.status === 401) {
+          setErr("Unauthorized when calling admin_create_user. (Usually missing apikey or invalid session.)");
+        } else if (resp.status === 403) {
+          setErr("Forbidden: caller is not authorized to create users (ensure you are an Admin).");
+        } else if (resp.status === 409) {
+          setErr("Email already exists (invite failed). Use Send Password Reset for existing users.");
+        } else {
+          setErr(formatError(json) || `admin_create_user failed with status ${resp.status}`);
         }
-
-        setJustCreatedUserId(newUserId);
-        await fetchAll();
-        clearForm();
-        setSaving(false);
         return;
       }
 
-      // Existing user update (profile + access)
-      const { error: upErr } = await supabase
-        .from("user_profiles")
-        .update({
-          full_name: fullName.trim(),
-          email: email.trim(),
-          role,
-          status: userStatus,
-          home_store_id: homeStoreId,
-          must_reset_password: !!forceReset,
-        })
-        .eq("id", selectedUserId);
-
-      if (upErr) throw upErr;
-
-      // Replace store access
-      const { error: delErr } = await supabase
-        .from("user_store_access")
-        .delete()
-        .eq("user_id", selectedUserId);
-      if (delErr) throw delErr;
-
-      if (storeAccessIds.length > 0) {
-        const accessRows = storeAccessIds.map((sid) => ({
-          user_id: selectedUserId,
-          store_id: sid,
-        }));
-
-        const { error: insErr } = await supabase
-          .from("user_store_access")
-          .insert(accessRows);
-        if (insErr) throw insErr;
+      const newUserId = json?.id;
+      if (!newUserId) {
+        setErr("No user id returned from admin_create_user.");
+        return;
       }
 
-      await fetchAll();
-      setSaving(false);
+      // ✅ refresh list so UI shows the new user
+      await refreshUsersAndStores();
+
+      // clear form
+      setFullName("");
+      setEmail("");
+      setRole("Employee");
+      setStatus("active");
+      setHomeStoreId(null);
+      setTempPassword("");
+      setSendInviteEmail(true);
+      setForcePasswordReset(true);
     } catch (e: any) {
-      console.error("AdminUsersPage save error:", e);
-      setErr(e?.message || "Save failed.");
-      setSaving(false);
+      console.error("AdminUsersPage create user error:", e);
+      setErr(formatError(e));
+    } finally {
+      setLoading(false);
     }
   }
-
-  async function sendPasswordResetEmail() {
-    setErr(null);
-    try {
-      if (!email.trim()) {
-        setErr("Email is required.");
-        return;
-      }
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (error) throw error;
-      setErr("Password reset email sent.");
-    } catch (e: any) {
-      console.error("reset email error:", e);
-      setErr(e?.message || "Failed to send reset email.");
-    }
-  }
-
-  if (loading) return <div style={{ padding: 16 }}>Loading...</div>;
 
   return (
     <div style={{ padding: 16 }}>
-      <div style={{ display: "flex", gap: 24 }}>
-        {/* Left panel */}
-        <div style={{ width: 360 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
+        <h2 style={{ margin: 0 }}>Admin — Users</h2>
+        {loading ? <span>Loading…</span> : null}
+        {err ? <span style={{ color: "crimson" }}>{err}</span> : null}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16 }}>
+        {/* Left list */}
+        <div style={{ border: "1px solid #ddd", padding: 12 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             <input
-              style={{ flex: 1, padding: 8 }}
+              style={{ flex: 1 }}
               placeholder="Filter by name or email"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
             />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              style={{ padding: 8 }}
-            >
-              <option>Active</option>
-              <option>Inactive</option>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="all">All</option>
             </select>
           </div>
 
-          <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 12 }}>
-            {filteredUsers.map((u) => (
-              <div
-                key={u.id}
-                onClick={() => selectUser(u)}
-                style={{
-                  padding: "10px 8px",
-                  cursor: "pointer",
-                  borderBottom: "1px solid #eee",
-                }}
-              >
-                <div style={{ fontWeight: 700 }}>{u.full_name || "(no name)"}</div>
-                <div style={{ fontSize: 12, color: "#555" }}>
-                  {(u.email ?? "")} • {(u.role ?? "")} • {(u.status ?? "")}
-                </div>
+          {filteredUsers.map((u) => (
+            <div key={u.id} style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 700 }}>{u.full_name || "(no name)"}</div>
+              <div style={{ fontSize: 13, color: "#555" }}>
+                {(u.email || "(no email)")} • {u.role || "?"} • {u.status || "?"}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
 
-        {/* Right panel */}
-        <div style={{ flex: 1 }}>
-          <h2 style={{ marginTop: 0 }}>Create User (Pre-provision)</h2>
-
-          {err && (
-            <div style={{ color: err.toLowerCase().includes("sent") ? "green" : "crimson", marginBottom: 12 }}>
-              {err}
-            </div>
-          )}
+        {/* Right create form */}
+        <div style={{ border: "1px solid #ddd", padding: 12 }}>
+          <h3>Create User (Pre-provision)</h3>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
               <div>Full Name</div>
-              <input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                style={{ width: "100%", padding: 8 }}
-              />
+              <input value={fullName} onChange={(e) => setFullName(e.target.value)} style={{ width: "100%" }} />
             </div>
             <div>
               <div>Email</div>
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                style={{ width: "100%", padding: 8 }}
-              />
+              <input value={email} onChange={(e) => setEmail(e.target.value)} style={{ width: "100%" }} />
             </div>
 
             <div>
               <div>Role</div>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                style={{ width: "100%", padding: 8 }}
-              >
+              <select value={role} onChange={(e) => setRole(e.target.value)} style={{ width: "100%" }}>
                 <option>Employee</option>
                 <option>Admin</option>
               </select>
@@ -393,11 +271,7 @@ export default function AdminUsersPage() {
 
             <div>
               <div>Status</div>
-              <select
-                value={userStatus}
-                onChange={(e) => setUserStatus(e.target.value)}
-                style={{ width: "100%", padding: 8 }}
-              >
+              <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: "100%" }}>
                 <option value="active">active</option>
                 <option value="inactive">inactive</option>
               </select>
@@ -407,9 +281,10 @@ export default function AdminUsersPage() {
               <div>Home Store</div>
               <select
                 value={homeStoreId ?? ""}
-                onChange={(e) => setHomeStoreId(Number(e.target.value))}
-                style={{ width: "100%", padding: 8 }}
+                onChange={(e) => setHomeStoreId(e.target.value || null)}
+                style={{ width: "100%" }}
               >
+                <option value="">— None —</option>
                 {stores.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.store_name} (ACE {s.ace_store_number})
@@ -420,20 +295,20 @@ export default function AdminUsersPage() {
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <label style={{ display: "block", marginBottom: 6 }}>
+            <label style={{ display: "block" }}>
               <input
                 type="checkbox"
-                checked={forceReset}
-                onChange={(e) => setForceReset(e.target.checked)}
+                checked={forcePasswordReset}
+                onChange={(e) => setForcePasswordReset(e.target.checked)}
               />{" "}
-              Force password reset (sets must_reset_password on the profile; user must sign up/login to activate account)
+              Force password reset
             </label>
 
-            <label style={{ display: "block", marginBottom: 6 }}>
+            <label style={{ display: "block" }}>
               <input
                 type="checkbox"
-                checked={sendInvite}
-                onChange={(e) => setSendInvite(e.target.checked)}
+                checked={sendInviteEmail}
+                onChange={(e) => setSendInviteEmail(e.target.checked)}
               />{" "}
               Send invite email (recommended)
             </label>
@@ -442,50 +317,21 @@ export default function AdminUsersPage() {
           <div style={{ marginTop: 12 }}>
             <div>Temporary Password (optional)</div>
             <div style={{ display: "flex", gap: 8 }}>
-              <input
-                value={tempPassword}
-                onChange={(e) => setTempPassword(e.target.value)}
-                style={{ flex: 1, padding: 8 }}
-              />
-              <button onClick={generatePassword}>Generate</button>
+              <input value={tempPassword} onChange={(e) => setTempPassword(e.target.value)} style={{ flex: 1 }} />
+              <button type="button" onClick={generatePassword}>
+                Generate
+              </button>
             </div>
           </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <button onClick={saveUser} disabled={saving}>
-              {saving ? "Saving..." : "Save"}
+            <button type="button" onClick={onCreateUser} disabled={loading}>
+              Save
             </button>
-            <button onClick={clearForm} disabled={saving}>
-              Clear / New
-            </button>
-            <button onClick={sendPasswordResetEmail} disabled={saving}>
-              Send reset link
+            <button type="button" onClick={refreshUsersAndStores} disabled={loading}>
+              Refresh
             </button>
           </div>
-
-          <hr style={{ margin: "18px 0" }} />
-
-          <h3 style={{ marginTop: 0 }}>Store Access</h3>
-          <div style={{ display: "grid", gap: 8 }}>
-            {stores.map((s) => (
-              <label key={s.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  type="checkbox"
-                  checked={storeAccessIds.includes(s.id)}
-                  onChange={() => toggleStoreAccess(s.id)}
-                />
-                <span>
-                  {s.store_name} (ACE {s.ace_store_number})
-                </span>
-              </label>
-            ))}
-          </div>
-
-          {justCreatedUserId && (
-            <div style={{ marginTop: 14, color: "green" }}>
-              Created user id: {justCreatedUserId}
-            </div>
-          )}
         </div>
       </div>
     </div>

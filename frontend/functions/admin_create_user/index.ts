@@ -1,17 +1,13 @@
 // supabase/functions/admin_create_user/index.ts
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+const getEnv = (k: string) => {
+  try {
+    return Deno.env.get(k);
+  } catch {
+    return undefined;
+  }
 };
-
-const getEnv = (k: string) =>
-  typeof Deno !== "undefined" && typeof Deno.env?.get === "function"
-    ? Deno.env.get(k)
-    : undefined;
 
 const SUPABASE_URL =
   getEnv("HUB_SUPABASE_URL") ?? getEnv("SUPABASE_URL") ?? getEnv("URL");
@@ -20,6 +16,30 @@ const SUPABASE_SERVICE_ROLE_KEY =
   getEnv("HUB_SUPABASE_SERVICE_ROLE_KEY") ??
   getEnv("SUPABASE_SERVICE_ROLE_KEY") ??
   getEnv("SERVICE_ROLE_KEY");
+
+const HUB_SITE_URL = getEnv("HUB_SITE_URL");
+const HUB_REDIRECT_URL = getEnv("HUB_REDIRECT_URL");
+
+function corsHeaders(origin: string | null) {
+  // If you want to lock this down later, change "*" to an allowlist check.
+  const allowOrigin = origin ?? "*";
+
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+    "Content-Type": "application/json",
+  };
+}
+
+function json(status: number, body: unknown, origin: string | null) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: corsHeaders(origin),
+  });
+}
 
 function genTempPassword() {
   return (
@@ -30,185 +50,150 @@ function genTempPassword() {
 }
 
 export default async function (req: Request): Promise<Response> {
-  // CORS preflight
+  const origin = req.headers.get("origin");
+
+  // ✅ Handle CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders(origin) });
   }
 
   if (req.method !== "POST") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: corsHeaders,
-    });
+    return json(405, { error: "method_not_allowed" }, origin);
   }
 
-  try {
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-      return new Response(
-        JSON.stringify({
-          error: "missing_env",
-          details: {
-            SUPABASE_URL_present: !!SUPABASE_URL,
-            SERVICE_ROLE_KEY_present: !!SUPABASE_SERVICE_ROLE_KEY,
-            looked_for: {
-              SUPABASE_URL: ["HUB_SUPABASE_URL", "SUPABASE_URL", "URL"],
-              SERVICE_ROLE_KEY: [
-                "HUB_SUPABASE_SERVICE_ROLE_KEY",
-                "SUPABASE_SERVICE_ROLE_KEY",
-                "SERVICE_ROLE_KEY",
-              ],
-            },
-          },
-        }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    // Caller must be logged in (Authorization: Bearer <access_token>)
-    const auth = req.headers.get("authorization") || "";
-    const bearer = auth.replace(/^Bearer\s+/i, "");
-    if (!bearer) {
-      return new Response(JSON.stringify({ error: "missing_auth" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Validate caller + role=Admin (from your user_profiles table)
-    const { data: callerData, error: callerErr } = await adminClient.auth.getUser(
-      bearer
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return json(
+      500,
+      {
+        error: "missing_env",
+        details: {
+          SUPABASE_URL: ["HUB_SUPABASE_URL", "SUPABASE_URL", "URL"],
+          SERVICE_ROLE_KEY: [
+            "HUB_SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SERVICE_ROLE_KEY",
+          ],
+        },
+      },
+      origin
     );
-    if (callerErr || !callerData?.user) {
-      return new Response(JSON.stringify({ error: "invalid_token" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+  }
+
+  const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // ✅ Supabase Edge Functions gateway often expects BOTH:
+  // - Authorization: Bearer <user jwt>
+  // - apikey: <anon key>
+  // The gateway enforces apikey; the function enforces Authorization.
+  const auth = req.headers.get("authorization") || "";
+  const bearer = auth.replace(/^Bearer\s+/i, "").trim();
+  if (!bearer) {
+    return json(401, { error: "missing_auth" }, origin);
+  }
+
+  // Validate caller token
+  const { data: callerData, error: callerErr } = await adminClient.auth.getUser(bearer);
+  if (callerErr || !callerData?.user) {
+    return json(401, { error: "invalid_token", details: String(callerErr?.message ?? callerErr) }, origin);
+  }
+  const callerId = callerData.user.id;
+
+  // Authorization: must be Admin in user_profiles
+  const { data: profileRow, error: profileErr } = await adminClient
+    .from("user_profiles")
+    .select("role")
+    .eq("id", callerId)
+    .maybeSingle();
+
+  if (profileErr) {
+    return json(500, { error: "profile_lookup_failed", details: profileErr }, origin);
+  }
+  const callerRole = (profileRow as { role?: string } | null)?.role;
+  if (callerRole !== "Admin") {
+    return json(403, { error: "forbidden" }, origin);
+  }
+
+  // Parse request body
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return json(400, { error: "invalid_json" }, origin);
+  }
+
+  const {
+    email,
+    full_name,
+    role = "Employee",
+    status = "active",
+    home_store_id = null,
+    invite = true,
+    tempPassword: providedTempPassword,
+    redirectTo: reqRedirect,
+  } = body ?? {};
+
+  if (!email || !full_name) {
+    return json(400, { error: "missing_fields", required: ["email", "full_name"] }, origin);
+  }
+
+  const redirectTo =
+    reqRedirect ??
+    HUB_REDIRECT_URL ??
+    (HUB_SITE_URL ? `${HUB_SITE_URL}/reset-password` : undefined);
+
+  let userId: string | undefined;
+
+  // If "invite", prefer the built-in invite email send (this actually emails)
+  if (invite) {
+    const { data, error } = await adminClient.auth.admin.inviteUserByEmail(email, {
+      redirectTo,
+    });
+
+    if (error) {
+      // If user already exists, return a clean error so UI can show "use reset"
+      // Supabase messages vary; keep it simple.
+      return json(409, { error: "invite_failed", details: error.message }, origin);
     }
 
-    const callerId = callerData.user.id;
-
-    const { data: profileRow, error: profileErr } = await adminClient
-      .from("user_profiles")
-      .select("role")
-      .eq("id", callerId)
-      .maybeSingle();
-
-    if (profileErr) {
-      return new Response(
-        JSON.stringify({ error: "profile_lookup_failed", details: profileErr }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!profileRow?.role || profileRow.role !== "Admin") {
-      return new Response(JSON.stringify({ error: "forbidden" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const body = await req.json();
-    const {
-      email,
-      full_name,
-      role,
-      status,
-      home_store_id,
-      invite = true,
-      tempPassword: providedTempPassword,
-      redirectTo: reqRedirect,
-    } = body ?? {};
-
-    if (!email || !full_name) {
-      return new Response(JSON.stringify({ error: "missing_fields" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
+    userId = data.user?.id;
+  } else {
     const tempPassword = providedTempPassword || genTempPassword();
 
-    // Create Auth user (or reuse existing)
-    // @ts-expect-error admin API exists
-    const createRes = await adminClient.auth.admin.createUser({
+    const { data, error } = await adminClient.auth.admin.createUser({
       email,
       password: tempPassword,
       email_confirm: false,
     });
 
-    let userId: string | undefined = createRes?.data?.user?.id;
+    if (error) {
+      return json(500, { error: "create_user_failed", details: error.message }, origin);
+    }
+
+    userId = data.user?.id;
 
     if (!userId) {
-      // @ts-expect-error admin API exists
-      const listRes = await adminClient.auth.admin.listUsers();
-      const found = listRes?.data?.users?.find(
-        (u: any) => (u.email ?? "").toLowerCase() === String(email).toLowerCase()
-      );
-      if (!found?.id) {
-        return new Response(
-          JSON.stringify({ error: "create_user_failed", details: createRes?.error }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      userId = found.id;
+      return json(500, { error: "create_user_failed_no_id" }, origin);
     }
-
-    // Upsert profile
-    const profilePayload = {
-      id: userId,
-      full_name,
-      email,
-      role: role || "Employee",
-      status: status || "active",
-      home_store_id: home_store_id || null,
-      must_reset_password: true, // you wanted this ON for new users
-    };
-
-    const { error: upsertErr } = await adminClient
-      .from("user_profiles")
-      .upsert(profilePayload, { onConflict: "id" });
-
-    if (upsertErr) {
-      return new Response(
-        JSON.stringify({ error: "profile_upsert_failed", details: upsertErr }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Generate reset link (best way to “invite” without creating new emails forever)
-    let resetLink: string | null = null;
-    try {
-      const redirectTo =
-        reqRedirect ??
-        getEnv("HUB_REDIRECT_URL") ??
-        (getEnv("HUB_SITE_URL")
-          ? `${getEnv("HUB_SITE_URL")}/reset-password`
-          : undefined);
-
-      // @ts-expect-error generateLink exists
-      const linkRes = await adminClient.auth.admin.generateLink("recovery", email, {
-        redirectTo,
-      });
-
-      resetLink = linkRes?.data?.action_link ?? null;
-    } catch {
-      // ignore (still returns temp password)
-    }
-
-    return new Response(
-      JSON.stringify({
-        id: userId,
-        resetLink,
-        tempPassword: resetLink ? undefined : tempPassword,
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: "internal", details: String(err) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
   }
+
+  // Upsert profile
+  const profilePayload = {
+    id: userId,
+    full_name,
+    email,
+    role,
+    status,
+    home_store_id,
+    must_reset_password: invite ? true : true, // keeping your original intent: new users must reset/activate
+  };
+
+  const { error: upsertErr } = await adminClient
+    .from("user_profiles")
+    .upsert(profilePayload, { onConflict: "id" });
+
+  if (upsertErr) {
+    return json(500, { error: "profile_upsert_failed", details: upsertErr }, origin);
+  }
+
+  return json(200, { id: userId, inviteSent: !!invite }, origin);
 }
