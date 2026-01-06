@@ -1,4 +1,4 @@
 # Minimal supabase config for CLI
 # Set `project_id` (project ref) before using `supabase` commands locally.
-project_id = ""
+project_id = "olbyttpwpovkvudtdoyc"
 # Optional: add organization or other settings if needed

@@ -1,16 +1,25 @@
-import { createClient } from "@supabase/supabase-js";
+// supabase/functions/admin_create_user/index.ts
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
-// Read env vars from Deno (preferred) with HUB_ prefixes, fallback to old names
-const getEnv = (k: string) => (typeof Deno !== "undefined" && typeof Deno.env?.get === "function" ? Deno.env.get(k) : process.env?.[k]);
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-const SUPABASE_URL = getEnv("HUB_SUPABASE_URL") ?? getEnv("SUPABASE_URL") ?? getEnv("URL");
-const SUPABASE_SERVICE_ROLE_KEY = getEnv("HUB_SUPABASE_SERVICE_ROLE_KEY") ?? getEnv("SUPABASE_SERVICE_ROLE_KEY") ?? getEnv("SERVICE_ROLE_KEY");
+const getEnv = (k: string) =>
+  typeof Deno !== "undefined" && typeof Deno.env?.get === "function"
+    ? Deno.env.get(k)
+    : undefined;
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("admin_create_user: missing required env vars");
-}
+const SUPABASE_URL =
+  getEnv("HUB_SUPABASE_URL") ?? getEnv("SUPABASE_URL") ?? getEnv("URL");
 
-const adminClient = createClient(SUPABASE_URL || "", SUPABASE_SERVICE_ROLE_KEY || "");
+const SUPABASE_SERVICE_ROLE_KEY =
+  getEnv("HUB_SUPABASE_SERVICE_ROLE_KEY") ??
+  getEnv("SUPABASE_SERVICE_ROLE_KEY") ??
+  getEnv("SERVICE_ROLE_KEY");
 
 function genTempPassword() {
   return (
@@ -21,70 +30,132 @@ function genTempPassword() {
 }
 
 export default async function (req: Request): Promise<Response> {
-  try {
-    if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  // CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
 
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: corsHeaders,
+    });
+  }
+
+  try {
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      return new Response(
+        JSON.stringify({
+          error: "missing_env",
+          details: {
+            SUPABASE_URL_present: !!SUPABASE_URL,
+            SERVICE_ROLE_KEY_present: !!SUPABASE_SERVICE_ROLE_KEY,
+            looked_for: {
+              SUPABASE_URL: ["HUB_SUPABASE_URL", "SUPABASE_URL", "URL"],
+              SERVICE_ROLE_KEY: [
+                "HUB_SUPABASE_SERVICE_ROLE_KEY",
+                "SUPABASE_SERVICE_ROLE_KEY",
+                "SERVICE_ROLE_KEY",
+              ],
+            },
+          },
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Caller must be logged in (Authorization: Bearer <access_token>)
     const auth = req.headers.get("authorization") || "";
     const bearer = auth.replace(/^Bearer\s+/i, "");
-    if (!bearer) return new Response(JSON.stringify({ error: "missing_auth" }), { status: 401 });
+    if (!bearer) {
+      return new Response(JSON.stringify({ error: "missing_auth" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    const { data: callerData, error: callerErr } = await adminClient.auth.getUser(bearer);
-    if (callerErr || !callerData?.user) return new Response(JSON.stringify({ error: "invalid_token" }), { status: 401 });
+    // Validate caller + role=Admin (from your user_profiles table)
+    const { data: callerData, error: callerErr } = await adminClient.auth.getUser(
+      bearer
+    );
+    if (callerErr || !callerData?.user) {
+      return new Response(JSON.stringify({ error: "invalid_token" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const callerId = callerData.user.id;
 
-    const { data: profileRows, error: profileErr } = await adminClient
+    const { data: profileRow, error: profileErr } = await adminClient
       .from("user_profiles")
       .select("role")
       .eq("id", callerId)
-      .limit(1)
       .maybeSingle();
 
-    if (profileErr) return new Response(JSON.stringify({ error: "profile_lookup_failed", details: profileErr }), { status: 500 });
-    const callerRole = (profileRows as { role?: string } | null)?.role;
-    if (!callerRole || callerRole !== "Admin") return new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
-
-    const body = await req.json();
-    const { email, full_name, role, status, home_store_id, invite = true, tempPassword: providedTempPassword, redirectTo: reqRedirect } = body;
-
-    if (!email || !full_name) return new Response(JSON.stringify({ error: "missing_fields" }), { status: 400 });
-
-    // Validate required env vars and fail-fast with helpful message listing what we checked
-    const checkedEnv = {
-      SUPABASE_URL: ["HUB_SUPABASE_URL", "SUPABASE_URL", "URL"],
-      SERVICE_ROLE_KEY: ["HUB_SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SERVICE_ROLE_KEY"],
-    };
-    const missing: Record<string, string[]> = {};
-    if (!SUPABASE_URL) missing.SUPABASE_URL = checkedEnv.SUPABASE_URL;
-    if (!SUPABASE_SERVICE_ROLE_KEY) missing.SERVICE_ROLE_KEY = checkedEnv.SERVICE_ROLE_KEY;
-    if (Object.keys(missing).length) {
-      return new Response(JSON.stringify({ error: "missing_env", details: missing }), { status: 500 });
+    if (profileErr) {
+      return new Response(
+        JSON.stringify({ error: "profile_lookup_failed", details: profileErr }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // Prepare temp password (if needed)
+    if (!profileRow?.role || profileRow.role !== "Admin") {
+      return new Response(JSON.stringify({ error: "forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const body = await req.json();
+    const {
+      email,
+      full_name,
+      role,
+      status,
+      home_store_id,
+      invite = true,
+      tempPassword: providedTempPassword,
+      redirectTo: reqRedirect,
+    } = body ?? {};
+
+    if (!email || !full_name) {
+      return new Response(JSON.stringify({ error: "missing_fields" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const tempPassword = providedTempPassword || genTempPassword();
 
-    // Create Auth user using service role; try to create a user and attempt to generate a reset link if invite requested.
-    // Use adminClient.auth.admin.createUser when available; fallback attempts handled safely.
+    // Create Auth user (or reuse existing)
+    // @ts-expect-error admin API exists
+    const createRes = await adminClient.auth.admin.createUser({
+      email,
+      password: tempPassword,
+      email_confirm: false,
+    });
 
-    // @ts-expect-error allow admin API usage without full typing
-    const createResRaw = await adminClient.auth.admin.createUser({ email, password: tempPassword, email_confirm: false });
-    type CreateRes = { data?: { id?: string } | null; error?: unknown };
-    const createRes = createResRaw as unknown as CreateRes;
-
-    let userId: string | undefined = createRes?.data?.id;
+    let userId: string | undefined = createRes?.data?.user?.id;
 
     if (!userId) {
-      // Try to find existing user
-      // @ts-expect-error allow admin API listUsers
-      const listResRaw = (await adminClient.auth.admin.listUsers?.({})) || { data: null, error: null };
-      type ListRes = { data?: { users?: Array<{ id: string; email?: string }> } | null; error?: unknown };
-      const listRes = listResRaw as unknown as ListRes;
-      const found = listRes?.data?.users?.find((u) => (u.email ?? "").toLowerCase() === email.toLowerCase());
-      if (!found) return new Response(JSON.stringify({ error: "create_user_failed" }), { status: 500 });
+      // @ts-expect-error admin API exists
+      const listRes = await adminClient.auth.admin.listUsers();
+      const found = listRes?.data?.users?.find(
+        (u: any) => (u.email ?? "").toLowerCase() === String(email).toLowerCase()
+      );
+      if (!found?.id) {
+        return new Response(
+          JSON.stringify({ error: "create_user_failed", details: createRes?.error }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       userId = found.id;
     }
 
-    // Upsert profile record
+    // Upsert profile
     const profilePayload = {
       id: userId,
       full_name,
@@ -92,41 +163,52 @@ export default async function (req: Request): Promise<Response> {
       role: role || "Employee",
       status: status || "active",
       home_store_id: home_store_id || null,
-      must_reset_password: invite ? false : true,
+      must_reset_password: true, // you wanted this ON for new users
     };
 
-    const { error: upsertErr } = await adminClient.from("user_profiles").upsert(profilePayload, { onConflict: "id" });
-    if (upsertErr) return new Response(JSON.stringify({ error: "profile_upsert_failed", details: upsertErr }), { status: 500 });
+    const { error: upsertErr } = await adminClient
+      .from("user_profiles")
+      .upsert(profilePayload, { onConflict: "id" });
 
-    let inviteSent = false;
-    let resetLink: string | null = null;
-
-    // Attempt to generate a password reset link and consider it as invite email if possible
-    try {
-      const redirectTo = reqRedirect ?? getEnv("HUB_REDIRECT_URL") ?? (getEnv("HUB_SITE_URL") ? `${getEnv("HUB_SITE_URL")}/reset-password` : undefined);
-      // @ts-expect-error: generateLink may exist on admin.auth
-      const linkResRaw = await adminClient.auth.admin.generateLink?.("reset", email, { redirectTo });
-      type LinkRes = { data?: { action_link?: string } | null } | null | undefined;
-      const linkRes = linkResRaw as unknown as LinkRes;
-      if (linkRes && linkRes.data && linkRes.data.action_link) {
-        inviteSent = true;
-        resetLink = linkRes.data.action_link as string;
-      }
-    } catch (e) {
-      // ignore - best-effort
-      console.warn("admin_create_user: generateLink failed", e);
+    if (upsertErr) {
+      return new Response(
+        JSON.stringify({ error: "profile_upsert_failed", details: upsertErr }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // If invite not sent and invite requested, we can at least return tempPassword (admin should relay securely)
+    // Generate reset link (best way to “invite” without creating new emails forever)
+    let resetLink: string | null = null;
+    try {
+      const redirectTo =
+        reqRedirect ??
+        getEnv("HUB_REDIRECT_URL") ??
+        (getEnv("HUB_SITE_URL")
+          ? `${getEnv("HUB_SITE_URL")}/reset-password`
+          : undefined);
 
-    const result: { id: string; inviteSent?: boolean; resetLink?: string | null; tempPassword?: string } = { id: userId };
-    if (inviteSent) result.inviteSent = true;
-    if (resetLink) result.resetLink = resetLink;
-    if (!inviteSent) result.tempPassword = tempPassword;
+      // @ts-expect-error generateLink exists
+      const linkRes = await adminClient.auth.admin.generateLink("recovery", email, {
+        redirectTo,
+      });
 
-    return new Response(JSON.stringify(result), { status: 200 });
+      resetLink = linkRes?.data?.action_link ?? null;
+    } catch {
+      // ignore (still returns temp password)
+    }
+
+    return new Response(
+      JSON.stringify({
+        id: userId,
+        resetLink,
+        tempPassword: resetLink ? undefined : tempPassword,
+      }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (err) {
-    console.error("admin_create_user error:", err);
-    return new Response(JSON.stringify({ error: "internal", details: String(err) }), { status: 500 });
+    return new Response(
+      JSON.stringify({ error: "internal", details: String(err) }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 }
