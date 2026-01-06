@@ -1,113 +1,100 @@
-// Supabase Edge Function: admin_create_user
-// Full copy/replace file content
-
+// supabase/functions/admin_create_user/index.ts
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
+const getEnv = (k: string) =>
+  typeof Deno !== "undefined" && typeof Deno.env?.get === "function"
+    ? Deno.env.get(k)
+    : undefined;
+
+const SUPABASE_URL =
+  getEnv("HUB_SUPABASE_URL") ?? getEnv("SUPABASE_URL") ?? getEnv("URL");
+
+const SUPABASE_SERVICE_ROLE_KEY =
+  getEnv("HUB_SUPABASE_SERVICE_ROLE_KEY") ??
+  getEnv("SUPABASE_SERVICE_ROLE_KEY") ??
+  getEnv("SERVICE_ROLE_KEY");
+
+function json(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
 
-function getEnv(k: string) {
-  try {
-    return Deno.env.get(k);
-  } catch {
-    return undefined;
-  }
-}
-
-// Accept either HUB_* or standard Supabase names
-const SUPABASE_URL =
-  getEnv("HUB_SUPABASE_URL") ??
-  getEnv("SUPABASE_URL") ??
-  getEnv("URL");
-
-const SERVICE_ROLE_KEY =
-  getEnv("HUB_SUPABASE_SERVICE_ROLE_KEY") ??
-  getEnv("SUPABASE_SERVICE_ROLE_KEY") ??
-  getEnv("SERVICE_ROLE_KEY");
-
-const HUB_SITE_URL = getEnv("HUB_SITE_URL");
-const HUB_REDIRECT_URL = getEnv("HUB_REDIRECT_URL"); // optional override
-
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-  console.error("admin_create_user missing env:", {
-    hasUrl: !!SUPABASE_URL,
-    hasServiceRole: !!SERVICE_ROLE_KEY,
-  });
-}
-
-const adminClient = createClient(SUPABASE_URL ?? "", SERVICE_ROLE_KEY ?? "", {
-  auth: { persistSession: false },
-});
-
 function genTempPassword() {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
-  const base = Array.from(bytes)
-    .map((b) => (b % 36).toString(36))
-    .join("");
-  return `${base}!A1`;
+  return (
+    Array.from(crypto.getRandomValues(new Uint8Array(24)))
+      .map((b) => (b % 36).toString(36))
+      .join("") + "!A1"
+  );
 }
 
-export default async function handler(req: Request): Promise<Response> {
+export default async function (req: Request): Promise<Response> {
   // CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { status: 204, headers: corsHeaders });
   }
 
   if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: corsHeaders,
+    });
   }
 
-  // Fail fast if env missing (so we stop guessing)
-  const checkedEnv = {
-    SUPABASE_URL: ["HUB_SUPABASE_URL", "SUPABASE_URL", "URL"],
-    SERVICE_ROLE_KEY: ["HUB_SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SERVICE_ROLE_KEY"],
-  };
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return json(500, {
+      error: "missing_env",
+      details: {
+        SUPABASE_URL_present: !!SUPABASE_URL,
+        SERVICE_ROLE_present: !!SUPABASE_SERVICE_ROLE_KEY,
+      },
+    });
+  }
 
-  const missing: Record<string, string[]> = {};
-  if (!SUPABASE_URL) missing.SUPABASE_URL = checkedEnv.SUPABASE_URL;
-  if (!SERVICE_ROLE_KEY) missing.SERVICE_ROLE_KEY = checkedEnv.SERVICE_ROLE_KEY;
-  if (Object.keys(missing).length) return json({ error: "missing_env", details: missing }, 500);
+  const authHeader = req.headers.get("authorization") || "";
+  const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!bearer) return json(401, { error: "missing_auth" });
 
-  // Auth header required
-  const auth = req.headers.get("authorization") || "";
-  const bearer = auth.replace(/^Bearer\s+/i, "").trim();
-  if (!bearer) return json({ error: "missing_auth" }, 401);
+  const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Validate caller token and role
-  const { data: callerData, error: callerErr } = await adminClient.auth.getUser(bearer);
-  if (callerErr || !callerData?.user) {
-    return json({ error: "invalid_token", details: callerErr?.message ?? "no user" }, 401);
+  // Validate caller JWT + get caller id
+  const { data: callerData, error: callerErr } = await adminClient.auth.getUser(
+    bearer,
+  );
+
+  if (callerErr || !callerData?.user?.id) {
+    return json(401, { error: "invalid_token", details: callerErr ?? null });
   }
 
   const callerId = callerData.user.id;
 
-  const { data: profile, error: profileErr } = await adminClient
+  // Caller must be Admin in user_profiles
+  const { data: callerProfile, error: profErr } = await adminClient
     .from("user_profiles")
     .select("role")
     .eq("id", callerId)
     .maybeSingle();
 
-  if (profileErr) return json({ error: "profile_lookup_failed", details: profileErr }, 500);
+  if (profErr) return json(500, { error: "profile_lookup_failed", details: profErr });
 
-  const callerRole = (profile as { role?: string } | null)?.role;
-  if (callerRole !== "Admin") return json({ error: "forbidden" }, 403);
+  if ((callerProfile?.role ?? "") !== "Admin") {
+    return json(403, { error: "forbidden" });
+  }
 
   // Parse request body
   let body: any;
   try {
     body = await req.json();
   } catch {
-    return json({ error: "invalid_json" }, 400);
+    return json(400, { error: "invalid_json" });
   }
 
   const {
@@ -116,35 +103,54 @@ export default async function handler(req: Request): Promise<Response> {
     role,
     status,
     home_store_id,
-    invite = true,
+    invite = false,
     tempPassword: providedTempPassword,
-    redirectTo: reqRedirect,
+    redirectTo,
   } = body ?? {};
 
-  if (!email || !full_name) return json({ error: "missing_fields", required: ["email", "full_name"] }, 400);
+  if (!email || !full_name) {
+    return json(400, { error: "missing_fields", required: ["email", "full_name"] });
+  }
 
   const tempPassword = providedTempPassword || genTempPassword();
 
-  // Create Auth user (or find existing)
-  let userId: string | undefined;
-
-  const createRes = await adminClient.auth.admin.createUser({
+  // Create Auth user
+  const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
     email,
     password: tempPassword,
     email_confirm: false,
   });
 
-  if (createRes?.data?.user?.id) {
-    userId = createRes.data.user.id;
-  } else {
-    // If already exists, try finding it
-    const listRes = await adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const found = listRes?.data?.users?.find((u) => (u.email ?? "").toLowerCase() === String(email).toLowerCase());
-    if (!found?.id) return json({ error: "create_user_failed", details: createRes?.error ?? null }, 500);
-    userId = found.id;
+  // Supabase-js v2 returns created.user.id
+  let userId = created?.user?.id;
+
+  // If user already exists, try to locate by listing users (best-effort)
+  if (!userId && createErr) {
+    // try to find existing user if error is "already registered"
+    // listUsers is paginated; we’ll scan first 5 pages x 200 to keep it simple but effective
+    for (let page = 1; page <= 5 && !userId; page++) {
+      const { data: listData, error: listErr } = await adminClient.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+
+      if (listErr) break;
+      const found = (listData?.users ?? []).find(
+        (u) => (u.email ?? "").toLowerCase() === String(email).toLowerCase(),
+      );
+      if (found?.id) userId = found.id;
+    }
+
+    if (!userId) {
+      return json(500, { error: "create_user_failed", details: createErr });
+    }
   }
 
-  // Upsert profile record
+  if (!userId) {
+    return json(500, { error: "create_user_failed", details: createErr ?? "unknown" });
+  }
+
+  // Upsert user profile
   const profilePayload = {
     id: userId,
     full_name,
@@ -159,35 +165,33 @@ export default async function handler(req: Request): Promise<Response> {
     .from("user_profiles")
     .upsert(profilePayload, { onConflict: "id" });
 
-  if (upsertErr) return json({ error: "profile_upsert_failed", details: upsertErr }, 500);
+  if (upsertErr) return json(500, { error: "profile_upsert_failed", details: upsertErr });
 
-  // Try generate recovery link (optional)
+  // Optional invite email
   let inviteSent = false;
-  let resetLink: string | null = null;
+  let actionLink: string | null = null;
 
-  try {
-    const redirectTo =
-      reqRedirect ??
-      HUB_REDIRECT_URL ??
-      (HUB_SITE_URL ? `${HUB_SITE_URL.replace(/\/$/, "")}/reset-password` : undefined);
+  if (invite) {
+    try {
+      // Prefer invite email (sends email)
+      const { data: inviteData, error: inviteErr } =
+        await adminClient.auth.admin.inviteUserByEmail(email, {
+          redirectTo: redirectTo || undefined,
+        });
 
-    const linkRes = await adminClient.auth.admin.generateLink({
-      type: "recovery",
-      email,
-      options: redirectTo ? { redirectTo } : undefined,
-    });
-
-    resetLink = linkRes?.data?.properties?.action_link ?? null;
-    if (resetLink) inviteSent = true;
-  } catch (e) {
-    console.warn("admin_create_user generateLink failed:", e);
+      if (!inviteErr) {
+        inviteSent = true;
+        actionLink = (inviteData as any)?.action_link ?? null;
+      }
+    } catch {
+      // ignore
+    }
   }
 
-  // Return results
-  const result: any = { id: userId, inviteSent };
-
-  if (resetLink) result.resetLink = resetLink;
-  if (!inviteSent) result.tempPassword = tempPassword;
-
-  return json(result, 200);
+  return json(200, {
+    id: userId,
+    inviteSent,
+    actionLink,
+    tempPassword: inviteSent ? undefined : tempPassword,
+  });
 }
