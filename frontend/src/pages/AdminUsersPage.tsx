@@ -432,11 +432,6 @@ export default function AdminUsersPage() {
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16 }}>
         {/* Left list */}
         <div style={{ border: "1px solid #ddd", padding: 12 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <button onClick={clearForm} style={{ width: "100%", padding: 8 }}>
-              + New User
-            </button>
-          </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             <input
@@ -579,30 +574,34 @@ export default function AdminUsersPage() {
             )}
           </div>
 
-          {formId && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>Store Access</div>
-              {stores.map((s) => (
-                <label key={s.id} style={{ display: "block", marginBottom: 4 }}>
-                  <input
-                    type="checkbox"
-                    checked={storeAccessIds.has(s.id)}
-                    onChange={(e) => {
-                      const newSet = new Set(storeAccessIds);
-                      if (e.target.checked) {
-                        newSet.add(s.id);
-                      } else {
-                        newSet.delete(s.id);
-                      }
-                      setStoreAccessIds(newSet);
-                    }}
-                  />{" "}
-                  {s.store_name} (ACE {s.ace_store_number})
-                  {s.status !== "active" ? " (inactive)" : ""}
-                </label>
-              ))}
-            </div>
-          )}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Store Access</div>
+            {!formId ? (
+              <div style={{ color: "#555" }}>Create the user first, then assign store access.</div>
+            ) : (
+              <>
+                {stores.map((s) => (
+                  <label key={s.id} style={{ display: "block", marginBottom: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={storeAccessIds.has(s.id)}
+                      onChange={(e) => {
+                        const newSet = new Set(storeAccessIds);
+                        if (e.target.checked) {
+                          newSet.add(s.id);
+                        } else {
+                          newSet.delete(s.id);
+                        }
+                        setStoreAccessIds(newSet);
+                      }}
+                    />{" "}
+                    {s.store_name} (ACE {s.ace_store_number})
+                    {s.status !== "active" ? " (inactive)" : ""}
+                  </label>
+                ))}
+              </>
+            )}
+          </div>
 
           <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
             <button type="button" onClick={handleSave} disabled={loading}>
