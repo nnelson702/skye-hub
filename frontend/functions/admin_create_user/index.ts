@@ -114,7 +114,7 @@ export default async function (req: Request): Promise<Response> {
   }
 
   // Parse request body
-  let body: any;
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
