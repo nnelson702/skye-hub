@@ -194,6 +194,39 @@ export default function AdminStoresPage() {
     }
   };
 
+  /**
+   * Soft delete: Set status to 'inactive' instead of hard delete.
+   * This preserves the store record for historical/reporting purposes.
+   */
+  const handleSoftDelete = async () => {
+    if (!form.id) {
+      setErr("No store selected.");
+      return;
+    }
+
+    if (!window.confirm(`Soft delete store "${form.store_name}"? It will be marked as inactive.`)) {
+      return;
+    }
+
+    setErr(null);
+    try {
+      const { error } = await supabase
+        .from("stores")
+        .update({ status: "inactive" })
+        .eq("id", form.id);
+
+      if (error) throw error;
+
+      await load();
+      clear();
+      console.log(`AdminStoresPage: soft delete complete for store=${form.id}`);
+    } catch (e: unknown) {
+      const message = formatError(e) || "Soft delete failed.";
+      console.error("AdminStoresPage soft delete error:", e);
+      setErr(message);
+    }
+  };
+
   const list = useMemo(() => stores, [stores]);
 
   if (loading) return <div>Loading…</div>;
@@ -368,6 +401,14 @@ export default function AdminStoresPage() {
         <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
           <button onClick={() => void save()}>Save</button>
           <button onClick={clear}>Clear / New</button>
+          {form.id && form.status !== "inactive" && (
+            <button
+              onClick={() => void handleSoftDelete()}
+              style={{ color: "crimson" }}
+            >
+              Delete (Soft)
+            </button>
+          )}
         </div>
       </div>
     </div>

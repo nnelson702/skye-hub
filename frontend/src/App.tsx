@@ -10,6 +10,7 @@ import AdminStoresPage from "./pages/AdminStoresPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
 
 import RequireAuth from "./routes/RequireAuth";
+import RequireAdmin from "./routes/RequireAdmin";
 
 export default function App() {
   return (
@@ -28,7 +29,9 @@ export default function App() {
           path="/admin"
           element={
             <RequireAuth>
-              <AdminPage />
+              <RequireAdmin>
+                <AdminPage />
+              </RequireAdmin>
             </RequireAuth>
           }
         />
@@ -36,7 +39,9 @@ export default function App() {
           path="/admin/stores"
           element={
             <RequireAuth>
-              <AdminStoresPage />
+              <RequireAdmin>
+                <AdminStoresPage />
+              </RequireAdmin>
             </RequireAuth>
           }
         />
@@ -44,7 +49,9 @@ export default function App() {
           path="/admin/users"
           element={
             <RequireAuth>
-              <AdminUsersPage />
+              <RequireAdmin>
+                <AdminUsersPage />
+              </RequireAdmin>
             </RequireAuth>
           }
         />
