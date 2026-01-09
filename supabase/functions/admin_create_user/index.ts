@@ -1,5 +1,6 @@
 // supabase/functions/admin_create_user/index.ts
-import { createClient } from "jsr:@supabase/supabase-js@2";
+// NOTE: Supabase-js import is DYNAMIC, not top-level, to prevent CORS preflight timeout
+// Top-level heavy imports block OPTIONS from returning quickly
 
 /**
  * CORS headers - dynamically set based on request origin for security
@@ -101,6 +102,8 @@ export default async function (req: Request): Promise<Response> {
     });
   }
 
+  // DYNAMIC IMPORT: Only load supabase-js after OPTIONS is handled (preflight won't block)
+  const { createClient } = await import("jsr:@supabase/supabase-js@2");
   const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
   // Validate caller JWT + get caller id
