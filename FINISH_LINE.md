@@ -166,6 +166,33 @@ npm run build
 - ✅ No lint errors
 - ✅ Build successful
 
+### CORS Preflight Verification (CRITICAL)
+
+**Before any other testing, verify CORS is working:**
+
+1. Open browser DevTools (F12) > Network tab
+2. Navigate to `/admin/users`
+3. Click "+ New User" and fill form
+4. Click "Save"
+5. **Expected Network Sequence**:
+   - **Request 1**: `OPTIONS` to `admin_create_user` 
+     - Status: `204 No Content` (NOT 504, NOT pending)
+     - Response time: < 100ms
+     - Headers include: `access-control-allow-origin`, `access-control-allow-methods`, `access-control-allow-headers`
+   - **Request 2**: `POST` to `admin_create_user`
+     - Status: `200 OK` or `400`/`403`/`500` (structured error)
+     - Response body: JSON with `{ok: true, data: {...}}` or `{ok: false, error: {...}}`
+     - Toast notification appears (success or error)
+
+**If OPTIONS returns 504 Gateway Timeout:**
+- Edge function is doing async work before checking method
+- Redeploy: `npx supabase functions deploy admin_create_user`
+- Verify with Supabase Dashboard > Edge Functions > admin_create_user > Logs
+
+**If POST succeeds but no toast appears:**
+- Check console for errors
+- Verify Toaster component is mounted in App.tsx
+
 ### Manual Smoke Tests
 
 #### Test 1: Create User

@@ -1,12 +1,20 @@
 // supabase/functions/admin_create_user/index.ts
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-correlation-id",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+/**
+ * CORS headers - dynamically set based on request origin for security
+ */
+function getCorsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("origin") || "*";
+  const requestHeaders = req.headers.get("access-control-request-headers");
+  
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": requestHeaders || "authorization, x-client-info, apikey, content-type, x-correlation-id",
+    "Access-Control-Max-Age": "86400", // 24 hours
+  };
+}
 
 const getEnv = (k: string) =>
   typeof Deno !== "undefined" && typeof Deno.env?.get === "function"
@@ -24,7 +32,7 @@ const SUPABASE_SERVICE_ROLE_KEY =
 /**
  * Structured response helper
  */
-function jsonResponse(status: number, payload: {
+function jsonResponse(req: Request, status: number, payload: {
   ok: boolean;
   data?: unknown;
   error?: { message: string; code?: string; details?: unknown };
@@ -32,7 +40,7 @@ function jsonResponse(status: number, payload: {
 }) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
 }
 
@@ -45,18 +53,21 @@ function genTempPassword() {
 }
 
 export default async function (req: Request): Promise<Response> {
-  // Extract correlation ID for tracking
-  const correlationId = req.headers.get("x-correlation-id") || crypto.randomUUID();
-
-  console.log(`[admin_create_user] Request received (correlation: ${correlationId})`);
-
-  // CORS preflight
+  // CRITICAL: Handle OPTIONS preflight FIRST, before any async operations
   if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: corsHeaders });
+    return new Response(null, { 
+      status: 204, 
+      headers: getCorsHeaders(req)
+    });
   }
 
+  // NOW safe to do async operations after OPTIONS is handled
+  const correlationId = req.headers.get("x-correlation-id") || crypto.randomUUID();
+
+  console.log(`[admin_create_user] Request received (correlation: ${correlationId}), method: ${req.method}`);
+
   if (req.method !== "POST") {
-    return jsonResponse(405, {
+    return jsonResponse(req, 405, {
       ok: false,
       error: { message: "Method Not Allowed", code: "METHOD_NOT_ALLOWED" },
       correlationId,
@@ -66,7 +77,7 @@ export default async function (req: Request): Promise<Response> {
   // Validate environment variables
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     console.error(`[admin_create_user] Missing environment variables (correlation: ${correlationId})`);
-    return jsonResponse(500, {
+    return jsonResponse(req, 500, {
       ok: false,
       error: {
         message: "Server configuration error: missing required environment variables",
@@ -83,7 +94,7 @@ export default async function (req: Request): Promise<Response> {
   const authHeader = req.headers.get("authorization") || "";
   const bearer = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!bearer) {
-    return jsonResponse(401, {
+    return jsonResponse(req, 401, {
       ok: false,
       error: { message: "Missing authorization token", code: "MISSING_AUTH" },
       correlationId,
@@ -99,7 +110,7 @@ export default async function (req: Request): Promise<Response> {
 
   if (callerErr || !callerData?.user?.id) {
     console.error(`[admin_create_user] Invalid token (correlation: ${correlationId}):`, callerErr);
-    return jsonResponse(401, {
+    return jsonResponse(req, 401, {
       ok: false,
       error: { message: "Invalid or expired token", code: "INVALID_TOKEN", details: callerErr },
       correlationId,
@@ -117,7 +128,7 @@ export default async function (req: Request): Promise<Response> {
 
   if (profErr) {
     console.error(`[admin_create_user] Profile lookup failed (correlation: ${correlationId}):`, profErr);
-    return jsonResponse(500, {
+    return jsonResponse(req, 500, {
       ok: false,
       error: { message: "Failed to verify admin permissions", code: "PROFILE_LOOKUP_FAILED", details: profErr },
       correlationId,
@@ -126,7 +137,7 @@ export default async function (req: Request): Promise<Response> {
 
   if ((callerProfile?.role ?? "") !== "Admin") {
     console.warn(`[admin_create_user] Non-admin attempted access (correlation: ${correlationId}), caller: ${callerId}`);
-    return jsonResponse(403, {
+    return jsonResponse(req, 403, {
       ok: false,
       error: { message: "Forbidden: Admin role required", code: "FORBIDDEN" },
       correlationId,
@@ -138,7 +149,7 @@ export default async function (req: Request): Promise<Response> {
   try {
     body = await req.json();
   } catch (e) {
-    return jsonResponse(400, {
+    return jsonResponse(req, 400, {
       ok: false,
       error: { message: "Invalid JSON in request body", code: "INVALID_JSON" },
       correlationId,
@@ -153,7 +164,7 @@ export default async function (req: Request): Promise<Response> {
     const { email, redirectTo } = body ?? {};
     
     if (!email) {
-      return jsonResponse(400, {
+      return jsonResponse(req, 400, {
         ok: false,
         error: { message: "Email is required for password reset", code: "MISSING_FIELDS" },
         correlationId,
@@ -170,7 +181,7 @@ export default async function (req: Request): Promise<Response> {
       
       if (resetErr) {
         console.error(`[admin_create_user] Password reset failed (correlation: ${correlationId}):`, resetErr);
-        return jsonResponse(500, {
+        return jsonResponse(req, 500, {
           ok: false,
           error: { message: "Failed to send password reset email", code: "RESET_FAILED", details: resetErr },
           correlationId,
@@ -179,14 +190,14 @@ export default async function (req: Request): Promise<Response> {
       
       console.log(`[admin_create_user] Password reset sent successfully (correlation: ${correlationId})`);
       
-      return jsonResponse(200, {
+      return jsonResponse(req, 200, {
         ok: true,
         data: { resetLink: null }, // Supabase doesn't return action_link for resetPasswordForEmail
         correlationId,
       });
     } catch (e) {
       console.error(`[admin_create_user] Password reset exception (correlation: ${correlationId}):`, e);
-      return jsonResponse(500, {
+      return jsonResponse(req, 500, {
         ok: false,
         error: { message: "Password reset exception", code: "RESET_EXCEPTION", details: String(e) },
         correlationId,
@@ -209,7 +220,7 @@ export default async function (req: Request): Promise<Response> {
   } = body ?? {};
 
   if (!email || !full_name) {
-    return jsonResponse(400, {
+    return jsonResponse(req, 400, {
       ok: false,
       error: { message: "Email and full name are required", code: "MISSING_FIELDS" },
       correlationId,
@@ -247,7 +258,7 @@ export default async function (req: Request): Promise<Response> {
 
     if (!userId) {
       console.error(`[admin_create_user] User creation failed and not found (correlation: ${correlationId}):`, createErr);
-      return jsonResponse(500, {
+      return jsonResponse(req, 500, {
         ok: false,
         error: { message: "Failed to create user", code: "CREATE_USER_FAILED", details: createErr },
         correlationId,
@@ -257,7 +268,7 @@ export default async function (req: Request): Promise<Response> {
 
   if (!userId) {
     console.error(`[admin_create_user] No userId after creation (correlation: ${correlationId})`);
-    return jsonResponse(500, {
+    return jsonResponse(req, 500, {
       ok: false,
       error: { message: "User creation returned no ID", code: "CREATE_USER_FAILED", details: createErr },
       correlationId,
@@ -283,7 +294,7 @@ export default async function (req: Request): Promise<Response> {
 
   if (upsertErr) {
     console.error(`[admin_create_user] Profile upsert failed (correlation: ${correlationId}):`, upsertErr);
-    return jsonResponse(500, {
+    return jsonResponse(req, 500, {
       ok: false,
       error: { message: "Failed to create user profile", code: "PROFILE_UPSERT_FAILED", details: upsertErr },
       correlationId,
@@ -318,7 +329,7 @@ export default async function (req: Request): Promise<Response> {
 
   console.log(`[admin_create_user] User creation complete (correlation: ${correlationId})`);
 
-  return jsonResponse(200, {
+  return jsonResponse(req, 200, {
     ok: true,
     data: {
       id: userId,
