@@ -2,6 +2,7 @@ import { useEffect, useState, type ChangeEvent } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../auth/AuthProvider";
 import { formatError } from "../lib/errors";
+import { showSuccess, showError, generateCorrelationId } from "../lib/toast";
 import type { UserProfile, UserStatus, UserRole } from "../types/profile";
 
 // Get anon key for edge function calls (required by Supabase gateway)
@@ -283,7 +284,8 @@ export default function AdminUsersPage() {
           redirectTo: `${window.location.origin}/reset-password`,
         };
 
-        console.log("[AdminUsersPage] Creating user with payload:", body);
+        const correlationId = generateCorrelationId();
+        console.log(`[AdminUsersPage] Creating user (correlation: ${correlationId}):`, body);
 
         const res = await fetch(
           "https://olbyttpwpovkvudtdoyc.supabase.co/functions/v1/admin_create_user",
@@ -293,43 +295,46 @@ export default function AdminUsersPage() {
               Authorization: `Bearer ${token}`,
               apikey: SUPABASE_ANON_KEY,
               "Content-Type": "application/json",
+              "x-correlation-id": correlationId,
             },
             body: JSON.stringify(body),
           }
         );
 
-        console.log("[AdminUsersPage] Edge function response status:", res.status);
+        console.log(`[AdminUsersPage] Edge function response status (correlation: ${correlationId}):`, res.status);
 
         const json = (await res.json()) as {
-          id?: string;
-          resetLink?: string | null;
-          tempPassword?: string;
-          error?: unknown;
+          ok?: boolean;
+          data?: { id?: string; resetLink?: string | null; tempPassword?: string };
+          error?: { message?: string; code?: string; details?: unknown };
+          correlationId?: string;
         };
 
-        console.log("[AdminUsersPage] Edge function response JSON:", json);
+        console.log(`[AdminUsersPage] Edge function response JSON (correlation: ${correlationId}):`, json);
 
-        if (!res.ok || !json.id) {
-          const errorMsg = formatError(json.error ?? json) || `Failed to create user (HTTP ${res.status})`;
-          console.error("[AdminUsersPage] Create user failed:", errorMsg, json);
+        if (!res.ok || !json.ok || !json.data?.id) {
+          const errorMsg = json.error?.message || `Failed to create user (HTTP ${res.status})`;
+          console.error(`[AdminUsersPage] Create user failed (correlation: ${correlationId}):`, errorMsg, json);
+          showError(errorMsg, { correlationId });
           setErr(errorMsg);
           return;
         }
 
-        const newUserId = json.id;
-        setLastInviteLink(json.resetLink ?? null);
-        if (!inviteChecked && json.tempPassword) {
-          setLastTempPassword(json.tempPassword);
+        const newUserId = json.data.id;
+        setLastInviteLink(json.data.resetLink ?? null);
+        if (!inviteChecked && json.data.tempPassword) {
+          setLastTempPassword(json.data.tempPassword);
         }
 
-        console.log("[AdminUsersPage] User created successfully, ID:", newUserId);
+        console.log(`[AdminUsersPage] User created successfully (correlation: ${correlationId}), ID: ${newUserId}`);
 
         await syncStoreAccess(newUserId, new Set(), assignedStores);
         await loadUsers();
         setSelectedUserId(newUserId);
         
-        // Clear error on success
+        // Clear error and show success toast
         setErr(null);
+        showSuccess(`User created successfully: ${form.full_name}`, { correlationId });
       } else {
         // EXISTING USER: simple update
         const updatePayload = {
@@ -348,12 +353,18 @@ export default function AdminUsersPage() {
           .maybeSingle();
 
         if (error) {
-          setErr(formatError(error) || "Failed to update user.");
+          const errorMsg = formatError(error) || "Failed to update user.";
+          console.error("[AdminUsersPage] Update user failed:", error);
+          showError(errorMsg);
+          setErr(errorMsg);
           return;
         }
 
         await syncStoreAccess(form.id, initialAssignedStores, assignedStores);
         await loadUsers();
+        
+        // Show success toast
+        showSuccess(`User updated successfully: ${form.full_name}`);
       }
     } catch (e: unknown) {
       const errorMsg = formatError(e) || "Network error while saving user.";
@@ -381,7 +392,8 @@ export default function AdminUsersPage() {
       }
       const token = sessionData.session.access_token;
 
-      console.log("[AdminUsersPage] Sending password reset for:", form.email);
+      const correlationId = generateCorrelationId();
+      console.log(`[AdminUsersPage] Sending password reset (correlation: ${correlationId}):`, form.email);
 
       const res = await fetch(
         "https://olbyttpwpovkvudtdoyc.supabase.co/functions/v1/admin_create_user",
@@ -391,6 +403,7 @@ export default function AdminUsersPage() {
             Authorization: `Bearer ${token}`,
             apikey: SUPABASE_ANON_KEY,
             "Content-Type": "application/json",
+            "x-correlation-id": correlationId,
           },
           body: JSON.stringify({
             mode: "reset",
@@ -400,27 +413,31 @@ export default function AdminUsersPage() {
         }
       );
 
-      console.log("[AdminUsersPage] Password reset response status:", res.status);
+      console.log(`[AdminUsersPage] Password reset response status (correlation: ${correlationId}):`, res.status);
 
       const json = (await res.json()) as {
-        resetLink?: string | null;
-        error?: unknown;
+        ok?: boolean;
+        data?: { resetLink?: string | null };
+        error?: { message?: string; code?: string; details?: unknown };
+        correlationId?: string;
       };
 
-      console.log("[AdminUsersPage] Password reset response JSON:", json);
+      console.log(`[AdminUsersPage] Password reset response JSON (correlation: ${correlationId}):`, json);
 
-      if (!res.ok) {
-        const errorMsg = formatError(json.error ?? json) || `Failed to send reset (HTTP ${res.status})`;
-        console.error("[AdminUsersPage] Password reset failed:", errorMsg, json);
+      if (!res.ok || !json.ok) {
+        const errorMsg = json.error?.message || `Failed to send reset (HTTP ${res.status})`;
+        console.error(`[AdminUsersPage] Password reset failed (correlation: ${correlationId}):`, errorMsg, json);
+        showError(errorMsg, { correlationId });
         setErr(errorMsg);
         return;
       }
 
-      setLastInviteLink(json.resetLink ?? null);
+      setLastInviteLink(json.data?.resetLink ?? null);
       
-      // Clear error on success
+      // Clear error and show success toast
       setErr(null);
-      console.log("[AdminUsersPage] Password reset email sent successfully");
+      showSuccess(`Password reset email sent to ${form.email}`, { correlationId });
+      console.log(`[AdminUsersPage] Password reset email sent successfully (correlation: ${correlationId})`);
     } catch (e: unknown) {
       const errorMsg = formatError(e) || "Network error while sending reset.";
       console.error("[AdminUsersPage] Reset exception:", e);
@@ -472,6 +489,7 @@ export default function AdminUsersPage() {
       // Refresh UI
       await loadUsers();
       setSelectedUserId(form.id);
+      showSuccess(`User deactivated: ${form.email}`);
     } finally {
       setLoading(false);
     }
@@ -495,12 +513,16 @@ export default function AdminUsersPage() {
         .eq("id", form.id);
 
       if (error) {
-        setErr(formatError(error) || "Failed to reactivate user.");
+        const errorMsg = formatError(error) || "Failed to reactivate user.";
+        console.error("[AdminUsersPage] Reactivate failed:", error);
+        showError(errorMsg);
+        setErr(errorMsg);
         return;
       }
 
       await loadUsers();
       setSelectedUserId(form.id);
+      showSuccess(`User reactivated: ${form.email}`);
     } finally {
       setLoading(false);
     }
@@ -546,6 +568,7 @@ export default function AdminUsersPage() {
       // Refresh UI
       await loadUsers();
       // Clear form to deselect
+      showSuccess(`User soft deleted: ${form.email}`);
       handleClear();
     } finally {
       setLoading(false);

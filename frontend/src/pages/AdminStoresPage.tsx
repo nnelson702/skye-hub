@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../auth/AuthProvider";
 import { formatError } from "../lib/errors";
+import { showSuccess, showError } from "../lib/toast";
 
 type StoreRow = {
   id: string;
@@ -167,6 +168,7 @@ export default function AdminStoresPage() {
         // If desired, pick the newly created item into the form (keep simple: clear form)
         clear();
         console.log("AdminStoresPage: save complete ok=true");
+        showSuccess(`Store created successfully: ${payload.store_name}`);
         return;
       }
 
@@ -186,9 +188,11 @@ export default function AdminStoresPage() {
       await load();
       clear();
       console.log("AdminStoresPage: save complete ok=true");
+      showSuccess(`Store updated successfully: ${payload.store_name}`);
     } catch (e: unknown) {
       const message = formatError(e) || "Save failed.";
       console.error("AdminStoresPage save error:", e);
+      showError(message);
       setErr(message);
       console.log("AdminStoresPage: save complete ok=false");
     }
@@ -220,9 +224,11 @@ export default function AdminStoresPage() {
       await load();
       clear();
       console.log(`AdminStoresPage: soft delete complete for store=${form.id}`);
+      showSuccess(`Store soft deleted: ${form.store_name}`);
     } catch (e: unknown) {
       const message = formatError(e) || "Soft delete failed.";
       console.error("AdminStoresPage soft delete error:", e);
+      showError(message);
       setErr(message);
     }
   };

@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "react-hot-toast";
 
 import AppShell from "./pages/AppShell";
 import HomePage from "./pages/HomePage";
@@ -14,7 +15,9 @@ import RequireAdmin from "./routes/RequireAdmin";
 
 export default function App() {
   return (
-    <AppShell>
+    <>
+      <Toaster />
+      <AppShell>
       <Routes>
         <Route path="/" element={
           <RequireAuth>
@@ -58,6 +61,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
-    </AppShell>
+      </AppShell>
+    </>
   );
 }
