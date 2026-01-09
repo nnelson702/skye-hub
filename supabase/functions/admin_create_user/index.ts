@@ -58,7 +58,11 @@ export default async function (req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response(null, { 
       status: 204, 
-      headers: getCorsHeaders(req)
+      headers: {
+        ...getCorsHeaders(req),
+        "x-skye-cors-probe": "1",
+        "x-skye-build": Deno.env.get("GITHUB_SHA") ?? Date.now().toString(),
+      }
     });
   }
 

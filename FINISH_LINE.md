@@ -169,35 +169,64 @@ npm run build
 ### CORS Preflight Verification (CRITICAL) ✅ FIXED
 
 **Dynamic Import Pattern Applied** (Jan 8, 2026 @ 14:15 UTC)  
-Removed top-level `import { createClient } from "jsr:@supabase/supabase-js@2"` and moved to dynamic import after OPTIONS check. This prevents module initialization from blocking CORS preflight responses.
+Removed top-level `import { createClient }` and moved to dynamic import after OPTIONS check. This prevents module initialization from blocking CORS preflight responses.
 
-**Before any other testing, verify CORS is working:**
+**CORS Probe Headers Added** (Jan 9, 2026)  
+All OPTIONS responses now include debugging headers:
+- `x-skye-cors-probe: 1` — Confirms request reached the edge function
+- `x-skye-build: <GITHUB_SHA or timestamp>` — Build identifier for deployment tracking
+
+**How to Verify CORS is Working:**
 
 1. Open browser DevTools (F12) > Network tab
 2. Hard refresh the page (Ctrl+Shift+R)
 3. Navigate to `/admin/users`
 4. Click "+ New User" and fill form
 5. Click "Save"
-6. **Expected Network Sequence** (should see both requests):
+6. **Check the Network tab for these requests** (in order):
    - **Request 1**: `OPTIONS` to `admin_create_user` 
-     - Status: `204 No Content` (NOT 504, NOT pending, NOT 546)
-     - Response time: **< 100ms** (should be instant)
-     - Headers include: `access-control-allow-origin`, `access-control-allow-methods`, `access-control-allow-headers`
+     - **Status**: `204 No Content` (NOT 504, NOT 546, NOT pending)
+     - **Time**: **< 100ms** (should be instant)
+     - **Response Headers** (click "Response headers" to expand):
+       - ✅ `access-control-allow-origin: <your-origin>`
+       - ✅ `access-control-allow-methods: POST, OPTIONS`
+       - ✅ `access-control-allow-headers: authorization, ...`
+       - ✅ `x-skye-cors-probe: 1` ← **This confirms handler was reached**
+       - ✅ `x-skye-build: <build-id>` ← **Build identifier**
    - **Request 2**: `POST` to `admin_create_user`
-     - Status: `200 OK` or `400`/`403`/`500` (structured error)
-     - Response body: JSON with `{ok: true, data: {...}, correlationId: "..."}` or `{ok: false, error: {...}, correlationId: "..."}`
+     - **Status**: `200 OK` or `400`/`403`/`500` (structured error)
+     - **Response body**: `{ok: true, data: {...}, correlationId: "..."}` or `{ok: false, error: {...}}`
      - Toast notification appears (success or error)
-     - **Correlation ID in toast matches** the correlationId from response
 
-**Troubleshooting** (if still seeing issues):
+**If you don't see the `x-skye-cors-probe` header:**
+- The OPTIONS request did NOT reach the edge function
+- Redeploy: `npx supabase functions deploy admin_create_user`
+- Check function logs: `npx supabase functions logs admin_create_user --follow`
+- Browser may be caching stale code; do a hard refresh (Ctrl+Shift+R) and try again
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| OPTIONS returns 504 | Edge function evaluation still blocking | This should be fixed; if not, redeploy: `npx supabase functions deploy admin_create_user` |
-| OPTIONS returns 546 | Request timeout (rare) | Check Supabase Dashboard logs; request may be exceeding 10s timeout |
-| OPTIONS never sent | Browser didn't send preflight | Ensure request has `Content-Type: application/json` (it should) |
-| POST never sent | Preflight failed, browser blocked it | Fix OPTIONS first; POST won't send until OPTIONS succeeds |
-| No toast appears | Frontend not catching response | Check browser console for errors; verify Toaster in App.tsx is mounted |
+**Troubleshooting Table:**
+
+| Issue | Expected vs Actual | Solution |
+|-------|-------------------|----------|
+| OPTIONS returns 504 | Expected 204, got 504 | Redeploy function: `npx supabase functions deploy admin_create_user` |
+| OPTIONS missing `x-skye-cors-probe` | Should show `1` in headers | Request didn't reach function; check network in DevTools; redeploy |
+| OPTIONS times out (no response) | Should respond <100ms | Cold-start timeout; function may have heavy top-level imports; check logs |
+| POST never sent | Browser blocks it until OPTIONS succeeds | Fix OPTIONS first; see above |
+| POST returns error (403/500) | May be valid if user not admin | Check `user_profiles.role = 'Admin'` in database; see error message in toast |
+| No toast appears | Toast should show even on error | Check browser console for JS errors; verify Toaster is in App.tsx |
+
+### How to Monitor Edge Function Deployments
+
+After deploying, monitor logs in real-time:
+```bash
+npx supabase functions logs admin_create_user --follow
+```
+
+Watch for:
+- `[admin_create_user] Request received` — Function executed
+- `[admin_create_user] Invalid token` — Auth failed (user not authenticated)
+- `[admin_create_user] User created successfully` — Success
+- Any errors about missing environment variables or database issues
 
 ### Manual Smoke Tests
 
