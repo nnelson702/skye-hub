@@ -97,6 +97,43 @@ export default async function (req: Request): Promise<Response> {
     return json(400, { error: "invalid_json" });
   }
 
+  // Check for password reset mode
+  const mode = body?.mode;
+  
+  if (mode === "reset") {
+    // PASSWORD RESET MODE: Send password reset email to existing user
+    const { email, redirectTo } = body ?? {};
+    
+    if (!email) {
+      return json(400, { error: "missing_fields", required: ["email"] });
+    }
+    
+    console.log("[admin_create_user] Sending password reset for:", email);
+    
+    try {
+      const { data: resetData, error: resetErr } = 
+        await adminClient.auth.resetPasswordForEmail(email, {
+          redirectTo: redirectTo || undefined,
+        });
+      
+      if (resetErr) {
+        console.error("[admin_create_user] Password reset failed:", resetErr);
+        return json(500, { error: "reset_failed", details: resetErr });
+      }
+      
+      console.log("[admin_create_user] Password reset sent successfully");
+      
+      return json(200, {
+        success: true,
+        resetLink: null, // Supabase doesn't return action_link for resetPasswordForEmail
+      });
+    } catch (e) {
+      console.error("[admin_create_user] Password reset exception:", e);
+      return json(500, { error: "reset_exception", details: String(e) });
+    }
+  }
+
+  // USER CREATION MODE (default)
   const {
     email,
     full_name,
@@ -191,7 +228,7 @@ export default async function (req: Request): Promise<Response> {
   return json(200, {
     id: userId,
     inviteSent,
-    actionLink,
+    resetLink: actionLink, // Changed from actionLink to resetLink for consistency with frontend
     tempPassword: inviteSent ? undefined : tempPassword,
   });
 }

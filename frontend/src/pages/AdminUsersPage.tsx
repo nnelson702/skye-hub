@@ -4,6 +4,9 @@ import { useAuth } from "../auth/AuthProvider";
 import { formatError } from "../lib/errors";
 import type { UserProfile, UserStatus, UserRole } from "../types/profile";
 
+// Get anon key for edge function calls (required by Supabase gateway)
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
 type StoreRow = {
   id: string;
   store_name: string;
@@ -280,17 +283,22 @@ export default function AdminUsersPage() {
           redirectTo: `${window.location.origin}/reset-password`,
         };
 
+        console.log("[AdminUsersPage] Creating user with payload:", body);
+
         const res = await fetch(
           "https://olbyttpwpovkvudtdoyc.supabase.co/functions/v1/admin_create_user",
           {
             method: "POST",
             headers: {
               Authorization: `Bearer ${token}`,
+              apikey: SUPABASE_ANON_KEY,
               "Content-Type": "application/json",
             },
             body: JSON.stringify(body),
           }
         );
+
+        console.log("[AdminUsersPage] Edge function response status:", res.status);
 
         const json = (await res.json()) as {
           id?: string;
@@ -299,8 +307,12 @@ export default function AdminUsersPage() {
           error?: unknown;
         };
 
+        console.log("[AdminUsersPage] Edge function response JSON:", json);
+
         if (!res.ok || !json.id) {
-          setErr(formatError(json.error ?? json) || "Failed to create user.");
+          const errorMsg = formatError(json.error ?? json) || `Failed to create user (HTTP ${res.status})`;
+          console.error("[AdminUsersPage] Create user failed:", errorMsg, json);
+          setErr(errorMsg);
           return;
         }
 
@@ -310,9 +322,14 @@ export default function AdminUsersPage() {
           setLastTempPassword(json.tempPassword);
         }
 
+        console.log("[AdminUsersPage] User created successfully, ID:", newUserId);
+
         await syncStoreAccess(newUserId, new Set(), assignedStores);
         await loadUsers();
         setSelectedUserId(newUserId);
+        
+        // Clear error on success
+        setErr(null);
       } else {
         // EXISTING USER: simple update
         const updatePayload = {
@@ -338,6 +355,10 @@ export default function AdminUsersPage() {
         await syncStoreAccess(form.id, initialAssignedStores, assignedStores);
         await loadUsers();
       }
+    } catch (e: unknown) {
+      const errorMsg = formatError(e) || "Network error while saving user.";
+      console.error("[AdminUsersPage] Save exception:", e);
+      setErr(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -360,12 +381,15 @@ export default function AdminUsersPage() {
       }
       const token = sessionData.session.access_token;
 
+      console.log("[AdminUsersPage] Sending password reset for:", form.email);
+
       const res = await fetch(
         "https://olbyttpwpovkvudtdoyc.supabase.co/functions/v1/admin_create_user",
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
+            apikey: SUPABASE_ANON_KEY,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -376,17 +400,31 @@ export default function AdminUsersPage() {
         }
       );
 
+      console.log("[AdminUsersPage] Password reset response status:", res.status);
+
       const json = (await res.json()) as {
         resetLink?: string | null;
         error?: unknown;
       };
 
+      console.log("[AdminUsersPage] Password reset response JSON:", json);
+
       if (!res.ok) {
-        setErr(formatError(json.error ?? json) || "Failed to send reset.");
+        const errorMsg = formatError(json.error ?? json) || `Failed to send reset (HTTP ${res.status})`;
+        console.error("[AdminUsersPage] Password reset failed:", errorMsg, json);
+        setErr(errorMsg);
         return;
       }
 
       setLastInviteLink(json.resetLink ?? null);
+      
+      // Clear error on success
+      setErr(null);
+      console.log("[AdminUsersPage] Password reset email sent successfully");
+    } catch (e: unknown) {
+      const errorMsg = formatError(e) || "Network error while sending reset.";
+      console.error("[AdminUsersPage] Reset exception:", e);
+      setErr(errorMsg);
     } finally {
       setLoading(false);
     }
