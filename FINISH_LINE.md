@@ -166,32 +166,38 @@ npm run build
 - ✅ No lint errors
 - ✅ Build successful
 
-### CORS Preflight Verification (CRITICAL)
+### CORS Preflight Verification (CRITICAL) ✅ FIXED
+
+**Dynamic Import Pattern Applied** (Jan 8, 2026 @ 14:15 UTC)  
+Removed top-level `import { createClient } from "jsr:@supabase/supabase-js@2"` and moved to dynamic import after OPTIONS check. This prevents module initialization from blocking CORS preflight responses.
 
 **Before any other testing, verify CORS is working:**
 
 1. Open browser DevTools (F12) > Network tab
-2. Navigate to `/admin/users`
-3. Click "+ New User" and fill form
-4. Click "Save"
-5. **Expected Network Sequence**:
+2. Hard refresh the page (Ctrl+Shift+R)
+3. Navigate to `/admin/users`
+4. Click "+ New User" and fill form
+5. Click "Save"
+6. **Expected Network Sequence** (should see both requests):
    - **Request 1**: `OPTIONS` to `admin_create_user` 
-     - Status: `204 No Content` (NOT 504, NOT pending)
-     - Response time: < 100ms
+     - Status: `204 No Content` (NOT 504, NOT pending, NOT 546)
+     - Response time: **< 100ms** (should be instant)
      - Headers include: `access-control-allow-origin`, `access-control-allow-methods`, `access-control-allow-headers`
    - **Request 2**: `POST` to `admin_create_user`
      - Status: `200 OK` or `400`/`403`/`500` (structured error)
-     - Response body: JSON with `{ok: true, data: {...}}` or `{ok: false, error: {...}}`
+     - Response body: JSON with `{ok: true, data: {...}, correlationId: "..."}` or `{ok: false, error: {...}, correlationId: "..."}`
      - Toast notification appears (success or error)
+     - **Correlation ID in toast matches** the correlationId from response
 
-**If OPTIONS returns 504 Gateway Timeout:**
-- Edge function is doing async work before checking method
-- Redeploy: `npx supabase functions deploy admin_create_user`
-- Verify with Supabase Dashboard > Edge Functions > admin_create_user > Logs
+**Troubleshooting** (if still seeing issues):
 
-**If POST succeeds but no toast appears:**
-- Check console for errors
-- Verify Toaster component is mounted in App.tsx
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| OPTIONS returns 504 | Edge function evaluation still blocking | This should be fixed; if not, redeploy: `npx supabase functions deploy admin_create_user` |
+| OPTIONS returns 546 | Request timeout (rare) | Check Supabase Dashboard logs; request may be exceeding 10s timeout |
+| OPTIONS never sent | Browser didn't send preflight | Ensure request has `Content-Type: application/json` (it should) |
+| POST never sent | Preflight failed, browser blocked it | Fix OPTIONS first; POST won't send until OPTIONS succeeds |
+| No toast appears | Frontend not catching response | Check browser console for errors; verify Toaster in App.tsx is mounted |
 
 ### Manual Smoke Tests
 
