@@ -4,7 +4,18 @@
 
 **Deployed Environment**: hub.helpful.place  
 **Repository**: nnelson702/skye-hub  
-**Last Updated**: January 8, 2026
+**Last Updated**: January 20, 2026
+
+---
+
+## Navigation
+
+The Admin Tools are accessible via the main navigation bar. After logging in as an Admin:
+
+1. **Home** - Main dashboard
+2. **Admin Tools** - Hub page with links to:
+   - **Manage Users** (`/admin/users`) - Full user administration
+   - **Manage Stores** (`/admin/stores`) - Full store management
 
 ---
 
@@ -12,19 +23,23 @@
 
 ### ✅ Core Features Implemented
 
-1. **Admin User Management** (Tool > Admin > Users)
-   - Create new users with immediate UI visibility
+1. **Admin User Management** (`/admin/users`)
+   - Create new users with single-step operation
    - Send password reset emails via Supabase
+   - Edit user details (name, role, status, home store)
    - Deactivate/reactivate users
    - Soft delete users (status='deleted')
+   - Assign store access via checkboxes
    - Toast notifications for all operations (success/failure)
    - Correlation IDs for request tracking
+   - All operations complete in a single click
 
-2. **Admin Store Management** (Tool > Admin > Stores)
+2. **Admin Store Management** (`/admin/stores`)
    - Create stores with immediate UI reflection
-   - Update existing stores
+   - Edit existing stores (all fields)
    - Soft delete stores (status='inactive')
    - Toast notifications for all operations
+   - Single-step operations (no manual DB edits required)
 
 3. **Observability & Debugging**
    - Correlation ID tracking across client and server

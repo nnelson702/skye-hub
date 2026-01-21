@@ -5,8 +5,9 @@ import { formatError } from "../lib/errors";
 import { showSuccess, showError, generateCorrelationId } from "../lib/toast";
 import type { UserProfile, UserStatus, UserRole } from "../types/profile";
 
-// Get anon key for edge function calls (required by Supabase gateway)
+// Get anon key and URL for edge function calls (required by Supabase gateway)
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 type StoreRow = {
   id: string;
@@ -288,7 +289,7 @@ export default function AdminUsersPage() {
         console.log(`[AdminUsersPage] Creating user (correlation: ${correlationId}):`, body);
 
         const res = await fetch(
-          "https://olbyttpwpovkvudtdoyc.supabase.co/functions/v1/admin_create_user",
+          `${SUPABASE_URL}/functions/v1/admin_create_user`,
           {
             method: "POST",
             headers: {
@@ -396,7 +397,7 @@ export default function AdminUsersPage() {
       console.log(`[AdminUsersPage] Sending password reset (correlation: ${correlationId}):`, form.email);
 
       const res = await fetch(
-        "https://olbyttpwpovkvudtdoyc.supabase.co/functions/v1/admin_create_user",
+        `${SUPABASE_URL}/functions/v1/admin_create_user`,
         {
           method: "POST",
           headers: {

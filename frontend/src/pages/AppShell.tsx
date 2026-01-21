@@ -21,7 +21,7 @@ function NavLink({ to, label }: { to: string; label: string }) {
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
-  const { user, signOut } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const loc = useLocation();
 
   // Hide navigation on login and password reset pages
@@ -42,7 +42,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <div style={{ display: "flex", alignItems: "center" }}>
             <div style={{ fontWeight: 800, marginRight: 18 }}>Skye Hub</div>
             <NavLink to="/" label="Home" />
-            <NavLink to="/admin" label="Admin" />
+            {profile?.role === "Admin" && (
+              <NavLink to="/admin" label="Admin Tools" />
+            )}
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
