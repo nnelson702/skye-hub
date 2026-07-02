@@ -5,6 +5,10 @@ import AppShell from "./pages/AppShell";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import CommunicationsPage from "./pages/CommunicationsPage";
+import DocumentsPage from "./pages/DocumentsPage";
+import TasksPage from "./pages/TasksPage";
+import DepartmentWalksPage from "./pages/DepartmentWalksPage";
 
 import AdminPage from "./pages/AdminPage";
 import AdminStoresPage from "./pages/AdminStoresPage";
@@ -18,49 +22,69 @@ export default function App() {
     <>
       <Toaster />
       <AppShell>
-      <Routes>
-        <Route path="/" element={
-          <RequireAuth>
-            <HomePage />
-          </RequireAuth>
-        } />
-
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
-
-        <Route
-          path="/admin"
-          element={
+        <Routes>
+          <Route path="/" element={
             <RequireAuth>
-              <RequireAdmin>
-                <AdminPage />
-              </RequireAdmin>
+              <HomePage />
             </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/stores"
-          element={
+          } />
+          <Route path="/communications" element={
             <RequireAuth>
-              <RequireAdmin>
-                <AdminStoresPage />
-              </RequireAdmin>
+              <CommunicationsPage />
             </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
+          } />
+          <Route path="/documents" element={
             <RequireAuth>
-              <RequireAdmin>
-                <AdminUsersPage />
-              </RequireAdmin>
+              <DocumentsPage />
             </RequireAuth>
-          }
-        />
+          } />
+          <Route path="/tasks" element={
+            <RequireAuth>
+              <TasksPage />
+            </RequireAuth>
+          } />
+          <Route path="/department-walks" element={
+            <RequireAuth>
+              <DepartmentWalksPage />
+            </RequireAuth>
+          } />
 
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+          <Route
+            path="/admin"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <AdminPage />
+                </RequireAdmin>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/stores"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <AdminStoresPage />
+                </RequireAdmin>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <AdminUsersPage />
+                </RequireAdmin>
+              </RequireAuth>
+            }
+          />
+
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
       </AppShell>
     </>
   );
