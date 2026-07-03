@@ -1,3 +1,5 @@
+import SectionCard from "../components/SectionCard";
+
 export default function TasksPage() {
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -9,18 +11,15 @@ export default function TasksPage() {
       </div>
 
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Work Queue</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Store, department, and manager-created work items.</p>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Timing</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Visibility into current, upcoming, and late work.</p>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Photos</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Photos and notes for merchandising, resets, and operations.</p>
-        </div>
+        <SectionCard title="Work Queue">
+          Store, department, and manager-created work items.
+        </SectionCard>
+        <SectionCard title="Timing">
+          Visibility into current, upcoming, and late work.
+        </SectionCard>
+        <SectionCard title="Photos">
+          Photos and notes for merchandising, resets, and operations.
+        </SectionCard>
       </div>
     </div>
   );

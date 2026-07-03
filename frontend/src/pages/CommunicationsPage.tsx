@@ -1,3 +1,5 @@
+import SectionCard from "../components/SectionCard";
+
 export default function CommunicationsPage() {
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -9,18 +11,15 @@ export default function CommunicationsPage() {
       </div>
 
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Company Announcements</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Chainwide updates, urgent notices, and leadership communication.</p>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Store Groups</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Store-specific discussion and execution notes.</p>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Department Groups</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Department-level guidance, priorities, resets, and follow-up.</p>
-        </div>
+        <SectionCard title="Company Announcements">
+          Chainwide updates, urgent notices, and leadership communication.
+        </SectionCard>
+        <SectionCard title="Store Groups">
+          Store-specific discussion and execution notes.
+        </SectionCard>
+        <SectionCard title="Department Groups">
+          Department-level guidance, priorities, resets, and follow-up.
+        </SectionCard>
       </div>
 
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
