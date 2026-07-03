@@ -1,3 +1,5 @@
+import SectionCard from "../components/SectionCard";
+
 export default function DepartmentWalksPage() {
   return (
     <div style={{ display: "grid", gap: 18 }}>
@@ -9,18 +11,15 @@ export default function DepartmentWalksPage() {
       </div>
 
       <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Walk Templates</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Repeatable checklists by store, department, or event type.</p>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Photo Uploads</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Capture completed merchandising, displays, and reset work.</p>
-        </div>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 18 }}>
-          <h2 style={{ marginTop: 0 }}>Review</h2>
-          <p style={{ color: "#4b5563", marginBottom: 0 }}>Manager review, follow-up notes, and next-step tasks.</p>
-        </div>
+        <SectionCard title="Walk Templates">
+          Repeatable checklists by store, department, or event type.
+        </SectionCard>
+        <SectionCard title="Photo Uploads">
+          Capture completed merchandising, displays, and reset work.
+        </SectionCard>
+        <SectionCard title="Review">
+          Manager review, follow-up notes, and next-step tasks.
+        </SectionCard>
       </div>
     </div>
   );
