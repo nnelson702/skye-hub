@@ -13,6 +13,7 @@ import DepartmentWalksPage from "./pages/DepartmentWalksPage";
 import AdminPage from "./pages/AdminPage";
 import AdminStoresPage from "./pages/AdminStoresPage";
 import AdminUsersPage from "./pages/AdminUsersPage";
+import AdminWalkQuestionsPage from "./pages/AdminWalkQuestionsPage";
 
 import RequireAuth from "./routes/RequireAuth";
 import RequireAdmin from "./routes/RequireAdmin";
@@ -78,6 +79,16 @@ export default function App() {
               <RequireAuth>
                 <RequireAdmin>
                   <AdminUsersPage />
+                </RequireAdmin>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/walk-questions"
+            element={
+              <RequireAuth>
+                <RequireAdmin>
+                  <AdminWalkQuestionsPage />
                 </RequireAdmin>
               </RequireAuth>
             }
